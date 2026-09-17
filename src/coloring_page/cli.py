@@ -18,6 +18,7 @@ from coloring_page.pipeline import (
     SUPPORTED_INPUT_SUFFIXES,
     UnsupportedFormatError,
     convert_image,
+    default_line_thickness,
     load_image,
     save_image,
 )
@@ -58,8 +59,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--thickness",
         type=int,
-        default=1,
-        help="Approximate output line thickness in pixels (default: 1).",
+        default=None,
+        help=(
+            "Approximate output line thickness in pixels (default: derived "
+            "from --max-dimension, e.g. "
+            f"{default_line_thickness(DEFAULT_WORKING_DIMENSION)} at the default "
+            "working resolution)."
+        ),
     )
     parser.add_argument(
         "--max-dimension",
@@ -96,6 +102,11 @@ def run(args: argparse.Namespace) -> int:
         Process exit code: ``0`` on success, ``1`` on a reported failure.
     """
     engine = get_engine(args.style)
+    thickness = (
+        args.thickness
+        if args.thickness is not None
+        else default_line_thickness(args.max_dimension)
+    )
 
     if args.input.is_dir():
         image_paths = _iter_batch_inputs(args.input)
@@ -110,7 +121,7 @@ def run(args: argparse.Namespace) -> int:
                 result = convert_image(
                     image,
                     engine,
-                    line_thickness=args.thickness,
+                    line_thickness=thickness,
                     max_dimension=args.max_dimension,
                 )
                 save_image(result, destination)
@@ -128,7 +139,7 @@ def run(args: argparse.Namespace) -> int:
     result = convert_image(
         image,
         engine,
-        line_thickness=args.thickness,
+        line_thickness=thickness,
         max_dimension=args.max_dimension,
     )
     save_image(result, args.output)

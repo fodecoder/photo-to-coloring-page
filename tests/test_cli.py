@@ -3,17 +3,66 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
+import pytest
 from PIL import Image
 
+from coloring_page import cli
 from coloring_page.cli import build_parser, main
-from coloring_page.pipeline import DEFAULT_WORKING_DIMENSION
+from coloring_page.pipeline import DEFAULT_WORKING_DIMENSION, default_line_thickness
 from tests.conftest import make_synthetic_photo
 
 
 def test_max_dimension_defaults_to_working_resolution() -> None:
     args = build_parser().parse_args(["in.png", "out.png"])
     assert args.max_dimension == DEFAULT_WORKING_DIMENSION
+
+
+def test_thickness_defaults_to_none_before_resolution() -> None:
+    # The CLI flag itself stays unset (None) until run() resolves it from
+    # --max-dimension, since the right default depends on that value.
+    args = build_parser().parse_args(["in.png", "out.png"])
+    assert args.thickness is None
+
+
+def test_thickness_defaults_to_working_resolution_derived_value(
+    tmp_path: Path, synthetic_photo_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+    original_convert_image = cli.convert_image
+
+    def spy_convert_image(*args: Any, **kwargs: Any) -> Any:
+        captured["line_thickness"] = kwargs["line_thickness"]
+        captured["max_dimension"] = kwargs["max_dimension"]
+        return original_convert_image(*args, **kwargs)
+
+    monkeypatch.setattr(cli, "convert_image", spy_convert_image)
+
+    exit_code = main([str(synthetic_photo_path), str(tmp_path / "out.png")])
+
+    assert exit_code == 0
+    assert captured["line_thickness"] == default_line_thickness(captured["max_dimension"])
+
+
+def test_thickness_explicit_value_overrides_default(
+    tmp_path: Path, synthetic_photo_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+    original_convert_image = cli.convert_image
+
+    def spy_convert_image(*args: Any, **kwargs: Any) -> Any:
+        captured["line_thickness"] = kwargs["line_thickness"]
+        return original_convert_image(*args, **kwargs)
+
+    monkeypatch.setattr(cli, "convert_image", spy_convert_image)
+
+    exit_code = main(
+        [str(synthetic_photo_path), str(tmp_path / "out.png"), "--thickness", "7"]
+    )
+
+    assert exit_code == 0
+    assert captured["line_thickness"] == 7
 
 
 def test_single_file_conversion(tmp_path: Path, synthetic_photo_path: Path) -> None:
