@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 
 from coloring_page.engines.base import ConversionEngine
+from coloring_page.pipeline import remove_small_specks, smooth_preserving_edges
 
 
 class XDoGEngine(ConversionEngine):
@@ -56,7 +57,9 @@ class XDoGEngine(ConversionEngine):
         --------
         ConversionEngine.convert : Full parameter and return-value contract.
         """
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float64) / 255.0
+        gray_u8 = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        denoised = smooth_preserving_edges(gray_u8)
+        gray = denoised.astype(np.float64) / 255.0
 
         g1 = cv2.GaussianBlur(gray, (0, 0), self.sigma)
         g2 = cv2.GaussianBlur(gray, (0, 0), self.sigma * self.k)
@@ -71,6 +74,7 @@ class XDoGEngine(ConversionEngine):
         )
         xdog = np.clip(xdog, 0.0, 1.0)
         lines = (xdog * 255).astype(np.uint8)
+        lines = remove_small_specks(lines)
 
         if line_thickness > 1:
             kernel = np.ones((line_thickness, line_thickness), np.uint8)

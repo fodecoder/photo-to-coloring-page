@@ -43,10 +43,53 @@ def make_synthetic_photo(width: int = 64, height: int = 48) -> np.ndarray:
     return image
 
 
+def add_salt_and_pepper_noise(
+    image: np.ndarray, *, amount: float = 0.02, seed: int = 0
+) -> np.ndarray:
+    """Return a copy of ``image`` with isolated extreme-value noise pixels.
+
+    Used to verify that engines' speckle-cleanup step drops noise dots
+    that don't correspond to real object boundaries, rather than to
+    exercise realistic sensor noise.
+
+    Parameters
+    ----------
+    image : np.ndarray
+        BGR image, shape ``(H, W, 3)``, dtype ``uint8``.
+    amount : float, optional
+        Fraction of pixels to replace with black or white noise, by
+        default 0.02.
+    seed : int, optional
+        Seed for the noise pattern, for reproducible tests, by default 0.
+
+    Returns
+    -------
+    np.ndarray
+        Noisy copy of ``image``.
+    """
+    rng = np.random.default_rng(seed)
+    noisy = image.copy()
+    height, width = image.shape[:2]
+    num_noisy = int(amount * height * width)
+
+    ys = rng.integers(0, height, size=num_noisy)
+    xs = rng.integers(0, width, size=num_noisy)
+    values = rng.choice([0, 255], size=num_noisy)
+    noisy[ys, xs] = values[:, None]
+
+    return noisy
+
+
 @pytest.fixture
 def synthetic_photo() -> np.ndarray:
     """A small synthetic BGR photo used to exercise conversion engines."""
     return make_synthetic_photo()
+
+
+@pytest.fixture
+def noisy_synthetic_photo(synthetic_photo: np.ndarray) -> np.ndarray:
+    """A synthetic photo with isolated salt-and-pepper noise pixels added."""
+    return add_salt_and_pepper_noise(synthetic_photo)
 
 
 @pytest.fixture

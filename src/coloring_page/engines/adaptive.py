@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 
 from coloring_page.engines.base import ConversionEngine
+from coloring_page.pipeline import remove_small_specks, smooth_preserving_edges
 
 
 class AdaptiveEngine(ConversionEngine):
@@ -44,15 +45,16 @@ class AdaptiveEngine(ConversionEngine):
         ConversionEngine.convert : Full parameter and return-value contract.
         """
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.medianBlur(gray, 5)
+        denoised = smooth_preserving_edges(gray)
         lines = cv2.adaptiveThreshold(
-            blurred,
+            denoised,
             255,
             cv2.ADAPTIVE_THRESH_MEAN_C,
             cv2.THRESH_BINARY,
             self.block_size,
             self.c,
         )
+        lines = remove_small_specks(lines)
 
         if line_thickness > 1:
             kernel = np.ones((line_thickness, line_thickness), np.uint8)

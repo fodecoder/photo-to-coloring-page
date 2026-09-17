@@ -86,6 +86,79 @@ def resize_to_max_dimension(image: np.ndarray, max_dimension: int | None) -> np.
     return cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
 
 
+def smooth_preserving_edges(
+    gray: np.ndarray,
+    *,
+    d: int = 9,
+    sigma_color: float = 75.0,
+    sigma_space: float = 75.0,
+) -> np.ndarray:
+    """Denoise a grayscale image while keeping strong edges sharp.
+
+    A plain Gaussian/median blur softens real object edges along with
+    sensor/texture noise, which is what produces jittery, broken outlines
+    downstream. A bilateral filter blurs only pixels that are both close
+    in space and similar in intensity, so it removes that noise without
+    smearing genuine boundaries -- the standard first step before
+    Canny/adaptive-threshold in photo-to-line-art pipelines.
+
+    Parameters
+    ----------
+    gray : np.ndarray
+        Single-channel image, shape ``(H, W)``, dtype ``uint8``.
+    d : int, optional
+        Diameter of the pixel neighborhood used during filtering, by
+        default 9.
+    sigma_color : float, optional
+        Filter sigma in color space; larger values mix more distant
+        intensities together, by default 75.0.
+    sigma_space : float, optional
+        Filter sigma in coordinate space; larger values let farther
+        pixels influence each other, by default 75.0.
+
+    Returns
+    -------
+    np.ndarray
+        Denoised image with the same shape and dtype as ``gray``.
+    """
+    return cv2.bilateralFilter(gray, d, sigma_color, sigma_space)
+
+
+def remove_small_specks(binary_image: np.ndarray, *, min_area: int = 4) -> np.ndarray:
+    """Erase isolated ink specks that are too small to be a real line.
+
+    Raw edge/threshold output often contains single-pixel or few-pixel
+    noise dots scattered across otherwise flat regions. These read as
+    stray marks on a coloring page rather than intentional strokes, so
+    connected components below ``min_area`` are dropped (painted over
+    with background) while larger strokes are left untouched.
+
+    Parameters
+    ----------
+    binary_image : np.ndarray
+        Single-channel image, shape ``(H, W)``, dtype ``uint8``, where
+        ``255`` is background (paper) and darker pixels are ink, as
+        produced by the conversion engines in this package.
+    min_area : int, optional
+        Minimum connected-component size, in pixels, for a component to
+        be kept, by default 4.
+
+    Returns
+    -------
+    np.ndarray
+        Copy of ``binary_image`` with small ink specks erased to white.
+    """
+    ink_mask = (binary_image < 128).astype(np.uint8)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(ink_mask, connectivity=8)
+
+    cleaned = binary_image.copy()
+    for label in range(1, num_labels):  # label 0 is the background
+        if stats[label, cv2.CC_STAT_AREA] < min_area:
+            cleaned[labels == label] = 255
+
+    return cleaned
+
+
 def convert_image(
     image: np.ndarray,
     engine: ConversionEngine,
