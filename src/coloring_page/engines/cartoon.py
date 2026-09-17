@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 from coloring_page.engines.base import ConversionEngine
-from coloring_page.pipeline import remove_small_specks
+from coloring_page.pipeline import remove_short_strokes
 
 
 class CartoonEngine(ConversionEngine):
@@ -34,7 +34,7 @@ class CartoonEngine(ConversionEngine):
     name = "cartoon"
 
     def __init__(
-        self, spatial_radius: int = 25, color_radius: int = 48, min_region_area: int = 6
+        self, spatial_radius: int = 25, color_radius: int = 48, min_region_extent: int = 6
     ) -> None:
         """Store the mean-shift segmentation and cleanup parameters.
 
@@ -50,14 +50,14 @@ class CartoonEngine(ConversionEngine):
             48. Larger values merge pixels that differ more in color,
             further reducing gradient/texture noise but also erasing
             subtler color boundaries.
-        min_region_area : int, optional
-            Minimum connected-component size (in pixels) for a boundary
+        min_region_extent : int, optional
+            Minimum bounding-box extent (in pixels) for a boundary
             fragment to survive cleanup, by default 6. Passed through to
-            :func:`coloring_page.pipeline.remove_small_specks`.
+            :func:`coloring_page.pipeline.remove_short_strokes`.
         """
         self.spatial_radius = spatial_radius
         self.color_radius = color_radius
-        self.min_region_area = min_region_area
+        self.min_region_extent = min_region_extent
 
     def convert(self, image: np.ndarray, *, line_thickness: int = 1) -> np.ndarray:
         """Segment the image into flat regions and outline their boundaries.
@@ -82,4 +82,4 @@ class CartoonEngine(ConversionEngine):
             edges = cv2.dilate(edges, thick_kernel, iterations=1)
 
         lines = cv2.bitwise_not(edges)
-        return remove_small_specks(lines, min_area=self.min_region_area)
+        return remove_short_strokes(lines, min_extent=self.min_region_extent)

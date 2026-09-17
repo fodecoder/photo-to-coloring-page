@@ -10,6 +10,7 @@ import pytest
 from coloring_page.pipeline import (
     UnsupportedFormatError,
     load_image,
+    remove_short_strokes,
     remove_small_specks,
     resize_to_max_dimension,
     save_image,
@@ -64,14 +65,46 @@ def test_smooth_preserving_edges_keeps_shape_and_dtype(synthetic_photo: np.ndarr
     assert smoothed.dtype == gray.dtype
 
 
-def test_remove_small_specks_drops_isolated_dot_keeps_large_shape() -> None:
+def test_remove_short_strokes_drops_isolated_dot_keeps_large_shape() -> None:
     image = np.full((20, 20), 255, dtype=np.uint8)
     # A single-pixel noise speck, isolated from anything else.
     image[2, 2] = 0
-    # A real stroke: a solid 6x6 block, well above the default min_area.
+    # A real stroke: a solid 6x6 block, well above the default min_extent.
     image[10:16, 10:16] = 0
 
-    cleaned = remove_small_specks(image, min_area=4)
+    cleaned = remove_short_strokes(image, min_extent=4)
 
     assert cleaned[2, 2] == 255
     assert np.all(cleaned[10:16, 10:16] == 0)
+
+
+def test_remove_short_strokes_keeps_thin_long_line_despite_small_area() -> None:
+    image = np.full((30, 30), 255, dtype=np.uint8)
+    # A 1px-wide, 20px-long line: tiny area (20px) but a large extent (20),
+    # which is exactly the case an area-based filter gets wrong.
+    image[15, 5:25] = 0
+
+    cleaned = remove_short_strokes(image, min_extent=4)
+
+    assert np.all(cleaned[15, 5:25] == 0)
+
+
+def test_remove_short_strokes_drops_short_line_below_min_extent() -> None:
+    image = np.full((30, 30), 255, dtype=np.uint8)
+    # A 1px-wide, 3px-long line: extent 3, below a min_extent of 4.
+    image[15, 5:8] = 0
+
+    cleaned = remove_short_strokes(image, min_extent=4)
+
+    assert np.all(cleaned[15, 5:8] == 255)
+
+
+def test_remove_small_specks_is_deprecated_alias() -> None:
+    image = np.full((20, 20), 255, dtype=np.uint8)
+    image[2, 2] = 0
+    image[10:16, 10:16] = 0
+
+    with pytest.warns(DeprecationWarning):
+        legacy_result = remove_small_specks(image, min_area=4)
+
+    assert np.array_equal(legacy_result, remove_short_strokes(image, min_extent=4))

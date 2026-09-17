@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 from coloring_page.engines.base import ConversionEngine
-from coloring_page.pipeline import remove_small_specks, smooth_preserving_edges
+from coloring_page.pipeline import remove_short_strokes, smooth_preserving_edges
 
 
 class AdaptiveEngine(ConversionEngine):
@@ -54,7 +54,7 @@ class AdaptiveEngine(ConversionEngine):
             self.block_size,
             self.c,
         )
-        lines = remove_small_specks(lines)
+        lines = remove_short_strokes(lines)
 
         if line_thickness > 1:
             kernel = np.ones((line_thickness, line_thickness), np.uint8)

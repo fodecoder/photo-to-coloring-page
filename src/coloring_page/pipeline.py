@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import cv2
@@ -124,14 +125,22 @@ def smooth_preserving_edges(
     return cv2.bilateralFilter(gray, d, sigma_color, sigma_space)
 
 
-def remove_small_specks(binary_image: np.ndarray, *, min_area: int = 4) -> np.ndarray:
-    """Erase isolated ink specks that are too small to be a real line.
+def remove_short_strokes(binary_image: np.ndarray, *, min_extent: int = 4) -> np.ndarray:
+    """Erase ink components that are too small to read as an intentional stroke.
 
     Raw edge/threshold output often contains single-pixel or few-pixel
     noise dots scattered across otherwise flat regions. These read as
     stray marks on a coloring page rather than intentional strokes, so
-    connected components below ``min_area`` are dropped (painted over
-    with background) while larger strokes are left untouched.
+    small components are dropped (painted over with background) while
+    real strokes are left untouched.
+
+    Filtering is done on each component's *extent* (the longer of its
+    bounding-box width/height) rather than its pixel area, because area
+    is the wrong metric for strokes: a long, thin line can have an area
+    as small as a stray dot, and would be wrongly erased by an area
+    threshold even though it is clearly a real line. Extent instead
+    tracks how far a component actually reaches across the page, which
+    a genuine stroke does and a speck does not.
 
     Parameters
     ----------
@@ -139,24 +148,49 @@ def remove_small_specks(binary_image: np.ndarray, *, min_area: int = 4) -> np.nd
         Single-channel image, shape ``(H, W)``, dtype ``uint8``, where
         ``255`` is background (paper) and darker pixels are ink, as
         produced by the conversion engines in this package.
-    min_area : int, optional
-        Minimum connected-component size, in pixels, for a component to
-        be kept, by default 4.
+    min_extent : int, optional
+        Minimum bounding-box extent (the larger of width/height), in
+        pixels, for a component to be kept, by default 4.
 
     Returns
     -------
     np.ndarray
-        Copy of ``binary_image`` with small ink specks erased to white.
+        Copy of ``binary_image`` with small ink components erased to
+        white.
     """
     ink_mask = (binary_image < 128).astype(np.uint8)
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(ink_mask, connectivity=8)
 
-    cleaned = binary_image.copy()
-    for label in range(1, num_labels):  # label 0 is the background
-        if stats[label, cv2.CC_STAT_AREA] < min_area:
-            cleaned[labels == label] = 255
+    # Building a boolean "keep this label" lookup table and indexing the
+    # whole label map with it in one vectorized pass avoids rescanning
+    # the full image once per small component, which is what made the
+    # previous loop-based implementation quadratic-ish on noisy images
+    # with thousands of small components.
+    extents = np.maximum(stats[:, cv2.CC_STAT_WIDTH], stats[:, cv2.CC_STAT_HEIGHT])
+    keep = extents >= min_extent
+    keep[0] = True  # background label; irrelevant since it's excluded by ink_mask below
 
+    cleaned = np.where(keep[labels], binary_image, 255).astype(np.uint8)
     return cleaned
+
+
+def remove_small_specks(binary_image: np.ndarray, *, min_area: int = 4) -> np.ndarray:
+    """Deprecated alias for :func:`remove_short_strokes`.
+
+    .. deprecated::
+        Use :func:`remove_short_strokes` instead. ``min_area`` is passed
+        through as ``min_extent``; the two are not numerically
+        equivalent (area vs. bounding-box extent), so callers relying on
+        precise area-based behavior should migrate explicitly rather
+        than assume identical output.
+    """
+    warnings.warn(
+        "remove_small_specks is deprecated; use remove_short_strokes "
+        "(area filtering replaced by extent filtering) instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return remove_short_strokes(binary_image, min_extent=min_area)
 
 
 def convert_image(

@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 from coloring_page.engines.base import ConversionEngine
-from coloring_page.pipeline import remove_small_specks, smooth_preserving_edges
+from coloring_page.pipeline import remove_short_strokes, smooth_preserving_edges
 
 
 class CannyEngine(ConversionEngine):
@@ -72,4 +72,4 @@ class CannyEngine(ConversionEngine):
         # Canny returns white edges on black; coloring pages need the
         # opposite (black lines on a white, printable background).
         lines = cv2.bitwise_not(edges)
-        return remove_small_specks(lines)
+        return remove_short_strokes(lines)

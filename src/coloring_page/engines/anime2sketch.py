@@ -17,7 +17,7 @@ import torch
 
 from coloring_page.engines._anime2sketch_arch import UnetGenerator, build_generator
 from coloring_page.engines.base import ConversionEngine
-from coloring_page.pipeline import remove_small_specks
+from coloring_page.pipeline import remove_short_strokes
 
 #: Environment variable used to point at a local weights file, in place of
 #: the default lookup locations below.
@@ -186,4 +186,4 @@ class Anime2SketchEngine(ConversionEngine):
             kernel = np.ones((line_thickness, line_thickness), np.uint8)
             sketch = cv2.erode(sketch, kernel, iterations=1)
 
-        return remove_small_specks(sketch)
+        return remove_short_strokes(sketch)

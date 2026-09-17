@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 from coloring_page.engines.base import ConversionEngine
-from coloring_page.pipeline import remove_small_specks, smooth_preserving_edges
+from coloring_page.pipeline import remove_short_strokes, smooth_preserving_edges
 
 
 class XDoGEngine(ConversionEngine):
@@ -74,7 +74,7 @@ class XDoGEngine(ConversionEngine):
         )
         xdog = np.clip(xdog, 0.0, 1.0)
         lines = (xdog * 255).astype(np.uint8)
-        lines = remove_small_specks(lines)
+        lines = remove_short_strokes(lines)
 
         if line_thickness > 1:
             kernel = np.ones((line_thickness, line_thickness), np.uint8)
