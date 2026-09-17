@@ -47,8 +47,7 @@ def load_image(path: Path) -> np.ndarray:
     if path.suffix.lower() not in SUPPORTED_INPUT_SUFFIXES:
         supported = ", ".join(sorted(SUPPORTED_INPUT_SUFFIXES))
         raise UnsupportedFormatError(
-            f"Unsupported file format {path.suffix!r} for {path}. "
-            f"Supported formats: {supported}"
+            f"Unsupported file format {path.suffix!r} for {path}. Supported formats: {supported}"
         )
 
     image = cv2.imread(str(path))

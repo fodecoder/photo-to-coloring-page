@@ -67,13 +67,13 @@ class XDoGEngine(ConversionEngine):
         xdog = np.where(
             diff >= self.epsilon,
             1.0,
-            1.0 + np.tanh((diff - self.epsilon)),
+            1.0 + np.tanh(diff - self.epsilon),
         )
         xdog = np.clip(xdog, 0.0, 1.0)
         lines = (xdog * 255).astype(np.uint8)
 
         if line_thickness > 1:
             kernel = np.ones((line_thickness, line_thickness), np.uint8)
-            lines = cv2.erode(lines, kernel, iterations=1)
+            lines = cv2.erode(lines, kernel, iterations=1).astype(np.uint8)
 
         return lines

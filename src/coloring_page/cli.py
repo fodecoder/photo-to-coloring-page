@@ -14,8 +14,8 @@ from pathlib import Path
 
 from coloring_page.engines.registry import ENGINES, get_engine
 from coloring_page.pipeline import (
-    UnsupportedFormatError,
     SUPPORTED_INPUT_SUFFIXES,
+    UnsupportedFormatError,
     convert_image,
     load_image,
     save_image,
@@ -33,7 +33,10 @@ def build_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="coloring-page",
-        description="Convert a photo (or a directory of photos) into a printable black-and-white coloring page.",
+        description=(
+            "Convert a photo (or a directory of photos) into a printable "
+            "black-and-white coloring page."
+        ),
     )
     parser.add_argument(
         "input",
