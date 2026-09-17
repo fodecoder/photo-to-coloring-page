@@ -10,7 +10,11 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 dependencies = [
-    "opencv-python>=4.8,<5",
+    # opencv-contrib-python is a superset of opencv-python (all the same
+    # modules, plus cv2.ximgproc) -- installing it is a drop-in
+    # replacement, needed for the "chained" and "skeleton" engines'
+    # rollingGuidanceFilter/l0Smooth/createEdgeDrawing/thinning calls.
+    "opencv-contrib-python>=4.8,<6",
     "numpy>=1.24,<3",
     "Pillow>=10.0,<12",
 ]
