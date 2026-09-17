@@ -20,12 +20,39 @@ from coloring_page.engines.base import ConversionEngine
 from coloring_page.pipeline import remove_small_specks
 
 #: Environment variable used to point at a local weights file, in place of
-#: the default cache-directory location.
+#: the default lookup locations below.
 WEIGHTS_ENV_VAR = "COLORING_PAGE_ANIME2SKETCH_WEIGHTS"
 
 #: Where weights are looked for when neither a constructor argument nor
-#: WEIGHTS_ENV_VAR is set.
+#: WEIGHTS_ENV_VAR is set: a `weights/` folder relative to the current
+#: working directory (matching the upstream Anime2Sketch project's own
+#: convention) first, then a per-user cache directory.
 DEFAULT_WEIGHTS_PATH = Path.home() / ".cache" / "coloring_page" / "anime2sketch.pth"
+_LOCAL_WEIGHTS_PATH = Path("weights") / "anime2sketch.pth"
+
+
+def _resolve_weights_path(explicit_path: str | Path | None) -> Path:
+    """Pick the weights file to use, in priority order.
+
+    Priority: an explicit path (constructor argument) > the
+    ``COLORING_PAGE_ANIME2SKETCH_WEIGHTS`` environment variable > an
+    existing ``./weights/anime2sketch.pth`` relative to the current working
+    directory > the per-user cache directory (used as the final fallback
+    even if it doesn't exist yet, so callers get a consistent "expected"
+    path to report in error messages).
+    """
+    if explicit_path is not None:
+        return Path(explicit_path)
+
+    env_path = os.environ.get(WEIGHTS_ENV_VAR)
+    if env_path:
+        return Path(env_path)
+
+    if _LOCAL_WEIGHTS_PATH.exists():
+        return _LOCAL_WEIGHTS_PATH
+
+    return DEFAULT_WEIGHTS_PATH
+
 
 _WEIGHTS_HELP = (
     "Anime2Sketch pretrained weights not found at {path}.\n"
@@ -34,8 +61,9 @@ _WEIGHTS_HELP = (
     "  1. Download the 'default' model weights (netG.pth) from the "
     "official Google Drive link in the Anime2Sketch README:\n"
     "     https://github.com/Mukosame/Anime2Sketch#download-pretrained-weights\n"
-    f"  2. Save the file to {DEFAULT_WEIGHTS_PATH}, or set the "
-    f"{WEIGHTS_ENV_VAR} environment variable to wherever you saved it.\n"
+    f"  2. Save the file to {_LOCAL_WEIGHTS_PATH} (relative to the current "
+    f"directory), {DEFAULT_WEIGHTS_PATH}, or set the {WEIGHTS_ENV_VAR} "
+    "environment variable to wherever you saved it.\n"
     "Anime2Sketch is MIT-licensed (Copyright (c) 2021 Xiaoyu Xiang); see "
     "THIRD_PARTY_LICENSES.md."
 )
@@ -54,24 +82,44 @@ class Anime2SketchEngine(ConversionEngine):
 
     name = "anime2sketch"
 
-    def __init__(self, weights_path: str | Path | None = None, load_size: int = 512) -> None:
-        """Store where to find the pretrained weights and the model's input size.
+    def __init__(
+        self,
+        weights_path: str | Path | None = None,
+        load_size: int = 512,
+        gamma: float = 1.6,
+        binarize: bool = True,
+    ) -> None:
+        """Store where to find the pretrained weights and inference options.
 
         Parameters
         ----------
         weights_path : str | Path | None, optional
-            Path to the ``.pth`` weights file. If None, resolved from the
-            ``COLORING_PAGE_ANIME2SKETCH_WEIGHTS`` environment variable,
-            falling back to ``~/.cache/coloring_page/anime2sketch.pth``.
+            Path to the ``.pth`` weights file. If None, resolved via
+            :func:`_resolve_weights_path` (env var, then
+            ``./weights/anime2sketch.pth``, then the per-user cache dir).
         load_size : int, optional
             Square size (in pixels) the image is resized to before being
             fed through the network, by default 512, matching the size the
             upstream pretrained weights were trained/tested with. Must be
             a multiple of 256 (the network has 8 downsampling stages).
+        gamma : float, optional
+            Gamma-correction factor applied to the input image before
+            inference, by default 1.6. On source images with large dark
+            or shadowed regions, this pretrained network otherwise tends
+            to collapse those regions into a solid black blob instead of
+            linework; lifting shadow detail beforehand (`output = input **
+            (1/gamma)`) avoids that failure mode. Set to 1.0 to disable.
+        binarize : bool, optional
+            Whether to threshold the network's soft, pencil-shaded output
+            into crisp black-on-white ink lines (Otsu's method, after a
+            percentile contrast stretch), by default True. This matches a
+            printed coloring-book page far better than the raw grayscale
+            sketch; set to False to keep the soft shading instead.
         """
-        env_path = os.environ.get(WEIGHTS_ENV_VAR)
-        self.weights_path = Path(weights_path or env_path or DEFAULT_WEIGHTS_PATH)
+        self.weights_path = _resolve_weights_path(weights_path)
         self.load_size = load_size
+        self.gamma = gamma
+        self.binarize = binarize
         self._model: UnetGenerator | None = None
 
     def _get_model(self) -> UnetGenerator:
@@ -110,6 +158,8 @@ class Anime2SketchEngine(ConversionEngine):
 
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         resized = cv2.resize(rgb, (self.load_size, self.load_size), interpolation=cv2.INTER_CUBIC)
+        if self.gamma != 1.0:
+            resized = (255 * (resized / 255.0) ** (1.0 / self.gamma)).astype(np.uint8)
         tensor = torch.from_numpy(resized).float().permute(2, 0, 1).unsqueeze(0) / 255.0
         tensor = (tensor - 0.5) / 0.5  # [0, 1] -> [-1, 1]
 
@@ -123,6 +173,14 @@ class Anime2SketchEngine(ConversionEngine):
         sketch = cv2.resize(
             sketch, (original_width, original_height), interpolation=cv2.INTER_CUBIC
         )
+
+        if self.binarize:
+            low, high = np.percentile(sketch, (2, 98))
+            stretched = np.clip(
+                (sketch.astype(np.float32) - low) / max(high - low, 1) * 255, 0, 255
+            )
+            sketch = stretched.astype(np.uint8)
+            _, sketch = cv2.threshold(sketch, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
         if line_thickness > 1:
             kernel = np.ones((line_thickness, line_thickness), np.uint8)

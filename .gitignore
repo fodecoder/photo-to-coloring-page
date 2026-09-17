@@ -49,3 +49,6 @@ Thumbs.db
 /docs/*.png
 /output.png
 /*-output.png
+
+# Downloaded ML model weights -- never bundled in the repository.
+/weights/

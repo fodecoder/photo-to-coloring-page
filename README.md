@@ -78,16 +78,19 @@ Run `coloring-page --help` for the full flag reference.
   differently-blurred copies of the image and sharpens the result with a
   tanh-based threshold. Tends to produce more consistent, artistic-looking
   outlines and handles gradual shading transitions gracefully.
-- **`cartoon`** — quantizes the image to a small flat color palette
-  (k-means) and draws lines only at the boundaries between quantized
-  regions. Unlike the other three styles, it doesn't key off intensity
-  gradients at all, so painted/illustrated sources with lots of internal
-  texture, shading, or glow effects don't produce stippling noise. Best
-  suited to painterly illustrations rather than photographs.
+- **`cartoon`** — segments the image into flat regions with mean-shift
+  filtering and draws lines only at the boundaries between regions.
+  Unlike the other three styles, it doesn't key off intensity gradients
+  at all, so painted/illustrated sources with lots of internal texture,
+  shading, or glow effects don't produce stippling noise. Best suited to
+  painterly illustrations rather than photographs.
 - **`anime2sketch`** *(optional, requires setup — see below)* — a
   pretrained neural network specifically trained to extract clean line art
   from illustration/anime-style artwork. Only appears as a `--style` choice
-  once its setup steps have been completed.
+  once its setup steps have been completed. Applies gamma correction
+  before inference (avoids the network collapsing large dark/shadowed
+  regions into a solid black blob) and binarizes its output by default
+  for crisp, printable ink lines instead of soft pencil shading.
 
 All four built-in styles are implemented in `src/coloring_page/engines/`.
 
@@ -113,7 +116,9 @@ weights are included**. To use it:
 2. Download the "default" model's weights yourself from the official
    Google Drive link in the
    [Anime2Sketch README](https://github.com/Mukosame/Anime2Sketch#download-pretrained-weights).
-3. Save the file to `~/.cache/coloring_page/anime2sketch.pth`, or set the
+3. Save the file to `weights/anime2sketch.pth` (relative to wherever you
+   run the CLI from -- matches the upstream project's own convention), to
+   `~/.cache/coloring_page/anime2sketch.pth`, or set the
    `COLORING_PAGE_ANIME2SKETCH_WEIGHTS` environment variable to point at
    wherever you saved it (see `.env.example`).
 

@@ -1,4 +1,4 @@
-"""Tests for the color-quantization cartoon conversion engine."""
+"""Tests for the mean-shift segmentation cartoon conversion engine."""
 
 from __future__ import annotations
 
@@ -40,3 +40,10 @@ def test_isolated_noise_is_cleaned_up(
         )
 
     assert count_small_components(noisy_result) == count_small_components(clean_result)
+
+
+def test_segmentation_parameters_affect_output(synthetic_photo: np.ndarray) -> None:
+    detailed = CartoonEngine(spatial_radius=5, color_radius=15).convert(synthetic_photo)
+    coarse = CartoonEngine(spatial_radius=40, color_radius=80).convert(synthetic_photo)
+
+    assert not np.array_equal(detailed, coarse)
