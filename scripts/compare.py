@@ -1,0 +1,194 @@
+"""Run every registered engine on a folder of images and compare results.
+
+Writes, per input image, a labeled contact sheet showing every style's
+output side by side, plus a single ``metrics.csv`` covering every
+(image, style) pair. This is the empirical decision mechanism for
+picking a default conversion style: run this against a handful of real
+photos, inspect the contact sheets and the metrics table, and only then
+update ``cli.py``'s ``--style`` default -- not something to decide by
+reading engine source.
+
+Usage
+-----
+::
+
+    python scripts/compare.py <input_dir> <output_dir> [--styles canny,xdog]
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import sys
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+from coloring_page.engines.registry import ENGINES, get_engine
+from coloring_page.metrics import compute_metrics
+from coloring_page.pipeline import SUPPORTED_INPUT_SUFFIXES, convert_image, load_image
+
+#: Height, in pixels, of the label strip drawn above each contact-sheet tile.
+_LABEL_HEIGHT = 24
+
+
+def _iter_input_images(input_dir: Path) -> list[Path]:
+    """Return the supported image files directly inside ``input_dir``, sorted."""
+    return sorted(
+        p
+        for p in input_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in SUPPORTED_INPUT_SUFFIXES
+    )
+
+
+def _label_tile(image: np.ndarray, label: str) -> np.ndarray:
+    """Stack a text label above a grayscale tile, returning a BGR image."""
+    tile = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    strip = np.full((_LABEL_HEIGHT, tile.shape[1], 3), 255, dtype=np.uint8)
+    cv2.putText(
+        strip, label, (4, _LABEL_HEIGHT - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1,
+        cv2.LINE_AA,
+    )
+    return cv2.vconcat([strip, tile])
+
+
+def _convert_with_style(image: np.ndarray, style: str) -> np.ndarray | None:
+    """Run one style, returning ``None`` (and a stderr warning) on failure.
+
+    A style can fail per-image for reasons unrelated to the comparison
+    itself -- most notably ``anime2sketch`` raising ``FileNotFoundError``
+    when its pretrained weights haven't been downloaded. One missing
+    style shouldn't abort comparing the rest.
+    """
+    try:
+        engine = get_engine(style)
+        return convert_image(image, engine)
+    except (FileNotFoundError, ValueError, OSError) as exc:
+        print(f"Skipping style {style!r}: {exc}", file=sys.stderr)
+        return None
+
+
+def build_contact_sheet(image: np.ndarray, styles: list[str]) -> np.ndarray:
+    """Convert ``image`` with every style in ``styles`` and lay results out side by side.
+
+    Parameters
+    ----------
+    image : np.ndarray
+        BGR input image, as returned by :func:`coloring_page.pipeline.load_image`.
+    styles : list[str]
+        Style names (keys of ``ENGINES``) to run and compare.
+
+    Returns
+    -------
+    np.ndarray
+        A single BGR contact-sheet image, one labeled tile per style that
+        succeeded (styles that raised an error are omitted).
+    """
+    tiles = []
+    for style in styles:
+        result = _convert_with_style(image, style)
+        if result is not None:
+            tiles.append(_label_tile(result, style))
+
+    if not tiles:
+        raise ValueError("Every style failed to convert this image; nothing to compare.")
+
+    max_height = max(tile.shape[0] for tile in tiles)
+    padded_tiles = [
+        cv2.copyMakeBorder(
+            tile, 0, max_height - tile.shape[0], 0, 0, cv2.BORDER_CONSTANT, value=(255, 255, 255)
+        )
+        for tile in tiles
+    ]
+    return cv2.hconcat(padded_tiles)
+
+
+def compare(input_dir: Path, output_dir: Path, styles: list[str]) -> None:
+    """Run ``styles`` over every image in ``input_dir`` and write comparison output.
+
+    Parameters
+    ----------
+    input_dir : Path
+        Directory of ``.jpg``/``.jpeg``/``.png`` images to compare styles on.
+    output_dir : Path
+        Directory to write contact-sheet PNGs and ``metrics.csv`` into.
+    styles : list[str]
+        Style names (keys of ``ENGINES``) to run and compare.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    image_paths = _iter_input_images(input_dir)
+
+    with (output_dir / "metrics.csv").open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(
+            ["image", "style", "ink_coverage", "component_count", "median_stroke_length",
+             "noise_fraction"]
+        )  # fmt: skip
+
+        for image_path in image_paths:
+            image = load_image(image_path)
+            sheet = build_contact_sheet(image, styles)
+            cv2.imwrite(str(output_dir / f"{image_path.stem}_compare.png"), sheet)
+
+            for style in styles:
+                result = _convert_with_style(image, style)
+                if result is None:
+                    continue
+                metrics = compute_metrics(result)
+                writer.writerow(
+                    [
+                        image_path.name,
+                        style,
+                        f"{metrics.ink_coverage:.4f}",
+                        metrics.component_count,
+                        f"{metrics.median_stroke_length:.2f}",
+                        f"{metrics.noise_fraction:.4f}",
+                    ]
+                )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Construct this script's argument parser."""
+    parser = argparse.ArgumentParser(
+        description="Compare conversion styles side by side on a folder of images."
+    )
+    parser.add_argument("input_dir", type=Path, help="Directory of input images.")
+    parser.add_argument("output_dir", type=Path, help="Directory to write comparison output into.")
+    parser.add_argument(
+        "--styles",
+        type=str,
+        default=None,
+        help="Comma-separated style names to compare (default: all registered styles).",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Script entry point.
+
+    Parameters
+    ----------
+    argv : list[str] | None, optional
+        Argument list to parse instead of ``sys.argv[1:]``, by default None.
+
+    Returns
+    -------
+    int
+        Process exit code: ``0`` on success, ``1`` if no input images were found.
+    """
+    args = build_parser().parse_args(argv)
+    styles = sorted(ENGINES) if args.styles is None else args.styles.split(",")
+
+    image_paths = _iter_input_images(args.input_dir)
+    if not image_paths:
+        print(f"No supported images found in {args.input_dir}", file=sys.stderr)
+        return 1
+
+    compare(args.input_dir, args.output_dir, styles)
+    print(f"Compared styles {styles} on {len(image_paths)} image(s) -> {args.output_dir}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
