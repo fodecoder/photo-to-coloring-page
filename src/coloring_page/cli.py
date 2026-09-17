@@ -54,7 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--style",
         choices=sorted(ENGINES),
         default="canny",
-        help="Conversion style to use (default: canny).",
+        help=(
+            "Conversion style to use (default: canny). 'adaptive' is a "
+            "textured-sketch style, not recommended for coloring pages -- "
+            "see the README's 'Conversion styles' section."
+        ),
     )
     parser.add_argument(
         "--thickness",

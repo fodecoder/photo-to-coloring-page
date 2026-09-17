@@ -10,13 +10,17 @@ from coloring_page.pipeline import remove_short_strokes, smooth_preserving_edges
 
 
 class AdaptiveEngine(ConversionEngine):
-    """Produce line art with a blurred image and adaptive thresholding.
+    """Produce a textured pencil-sketch effect with adaptive thresholding.
 
     This mimics a classic "pencil sketch" technique: the image is
     heavily blurred, then thresholded per-neighborhood so that local
     contrast (rather than a single global cutoff) decides where a line
-    falls. It tends to preserve more shading detail as texture than
-    ``canny``, which can be desirable for portraits or busy scenes.
+    falls. It preserves shading detail as texture rather than clean
+    outlines, which on real photos produces far too much ink coverage
+    and too many small, disconnected fragments to work as a coloring
+    page -- prefer ``canny``, ``xdog``, ``chained``, or ``skeleton`` for
+    that use case. This style is kept for users who want the textured
+    look for its own sake.
     """
 
     name = "adaptive"
