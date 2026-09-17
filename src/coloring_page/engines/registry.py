@@ -11,6 +11,7 @@ from coloring_page.engines.adaptive import AdaptiveEngine
 from coloring_page.engines.base import ConversionEngine
 from coloring_page.engines.canny import CannyEngine
 from coloring_page.engines.cartoon import CartoonEngine
+from coloring_page.engines.chained import ChainedEngine
 from coloring_page.engines.xdog import XDoGEngine
 
 ENGINES: dict[str, type[ConversionEngine]] = {
@@ -18,6 +19,7 @@ ENGINES: dict[str, type[ConversionEngine]] = {
     "adaptive": AdaptiveEngine,
     "xdog": XDoGEngine,
     "cartoon": CartoonEngine,
+    "chained": ChainedEngine,
 }
 
 try:
