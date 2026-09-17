@@ -23,13 +23,13 @@ dev = [
     "mypy>=1.10",
 ]
 ml = [
-    # Placeholder for an optional deep-learning engine. No model weights are
-    # bundled with this project. A user who wants to enable a pretrained
-    # model must add the relevant inference library here (e.g. `torch`,
-    # `transformers`, `diffusers`) themselves, download the weights they
-    # choose, and verify that model's license permits their intended use
-    # before enabling it. See engines/base.py and the
-    # add-conversion-style skill for how to wire a new engine in.
+    # Enables the optional `anime2sketch` engine (src/coloring_page/engines/
+    # anime2sketch.py). No model weights are bundled with this project --
+    # after installing this extra, you must still separately download the
+    # Anime2Sketch pretrained weights yourself; see the README's
+    # "Extending with an ML engine" section. See engines/base.py and the
+    # add-conversion-style skill for how to wire up further new engines.
+    "torch>=2.0",
 ]
 
 [project.scripts]

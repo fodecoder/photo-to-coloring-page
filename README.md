@@ -84,24 +84,46 @@ Run `coloring-page --help` for the full flag reference.
   gradients at all, so painted/illustrated sources with lots of internal
   texture, shading, or glow effects don't produce stippling noise. Best
   suited to painterly illustrations rather than photographs.
+- **`anime2sketch`** *(optional, requires setup — see below)* — a
+  pretrained neural network specifically trained to extract clean line art
+  from illustration/anime-style artwork. Only appears as a `--style` choice
+  once its setup steps have been completed.
 
-All four are implemented in `src/coloring_page/engines/`.
+All four built-in styles are implemented in `src/coloring_page/engines/`.
 
 ## Extending with an ML engine
 
 `src/coloring_page/engines/base.py` defines an abstract `ConversionEngine`
-interface. A pretrained deep-learning model (for example, one hosted on
-Hugging Face) can be added as a new engine implementing that interface and
-registered in `src/coloring_page/engines/registry.py`; the CLI and pipeline
-require no other changes.
+interface. A pretrained deep-learning model can be added as a new engine
+implementing that interface and registered in
+`src/coloring_page/engines/registry.py`; the CLI and pipeline require no
+other changes. This repository does **not** bundle any model weights, and
+the default engine has zero machine-learning dependencies.
 
-This repository does **not** bundle any model weights, and the default
-engine has zero machine-learning dependencies. To use an ML-based engine, a
-user must install its inference library themselves (see the `ml` optional
-dependency group in `pyproject.toml`), download the model weights of their
-choice, and check that model's license permits their intended use before
-enabling it. See `.claude/skills/add-conversion-style/SKILL.md` for the
-full checklist when adding a new engine.
+### `anime2sketch`
+
+`src/coloring_page/engines/anime2sketch.py` wires in
+[Anime2Sketch](https://github.com/Mukosame/Anime2Sketch) (MIT License,
+Copyright (c) 2021 Xiaoyu Xiang — see `THIRD_PARTY_LICENSES.md`) as an
+example of a real pretrained engine. Its network architecture is vendored
+into `src/coloring_page/engines/_anime2sketch_arch.py`; **no pretrained
+weights are included**. To use it:
+
+1. Install the `ml` extra: `pip install -e ".[ml]"` (adds `torch`).
+2. Download the "default" model's weights yourself from the official
+   Google Drive link in the
+   [Anime2Sketch README](https://github.com/Mukosame/Anime2Sketch#download-pretrained-weights).
+3. Save the file to `~/.cache/coloring_page/anime2sketch.pth`, or set the
+   `COLORING_PAGE_ANIME2SKETCH_WEIGHTS` environment variable to point at
+   wherever you saved it (see `.env.example`).
+
+Once both steps are done, `anime2sketch` appears as a `--style` choice.
+Without them, it's simply absent from `--help` and the default install
+stays free of ML dependencies. Before using this or any other pretrained
+model, confirm its license permits your intended use.
+
+See `.claude/skills/add-conversion-style/SKILL.md` for the full checklist
+when adding a further new engine.
 
 ## Running the test suite
 
@@ -141,4 +163,7 @@ building a one-file executable with PyInstaller.
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE) for the full text.
+MIT. See [`LICENSE`](LICENSE) for the full text. This project also vendors
+a small piece of third-party source code (the optional `anime2sketch`
+engine's network architecture); see
+[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) for its license.

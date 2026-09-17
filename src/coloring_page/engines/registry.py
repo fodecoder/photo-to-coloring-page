@@ -20,6 +20,16 @@ ENGINES: dict[str, type[ConversionEngine]] = {
     "cartoon": CartoonEngine,
 }
 
+try:
+    from coloring_page.engines.anime2sketch import Anime2SketchEngine
+except ImportError:
+    # The `ml` extra (torch) isn't installed -- the default install has
+    # zero ML dependencies, so this engine simply doesn't appear as a
+    # `--style` choice unless `pip install -e ".[ml]"` was run.
+    pass
+else:
+    ENGINES["anime2sketch"] = Anime2SketchEngine
+
 
 def get_engine(style: str) -> ConversionEngine:
     """Instantiate the conversion engine registered under ``style``.
