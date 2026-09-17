@@ -6,8 +6,14 @@ from pathlib import Path
 
 from PIL import Image
 
-from coloring_page.cli import main
+from coloring_page.cli import build_parser, main
+from coloring_page.pipeline import DEFAULT_WORKING_DIMENSION
 from tests.conftest import make_synthetic_photo
+
+
+def test_max_dimension_defaults_to_working_resolution() -> None:
+    args = build_parser().parse_args(["in.png", "out.png"])
+    assert args.max_dimension == DEFAULT_WORKING_DIMENSION
 
 
 def test_single_file_conversion(tmp_path: Path, synthetic_photo_path: Path) -> None:

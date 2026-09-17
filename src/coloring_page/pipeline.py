@@ -13,6 +13,16 @@ from coloring_page.engines.base import ConversionEngine
 #: File extensions accepted as input photos.
 SUPPORTED_INPUT_SUFFIXES = frozenset({".jpg", ".jpeg", ".png"})
 
+#: Longest-side pixel size that conversion is normalized to before any
+#: engine runs. Every engine's resolution-dependent kernel sizes are
+#: derived from this value (see :func:`derive_kernel_size`) rather than
+#: hardcoded, so a photo shot at any resolution is processed at a scale
+#: those kernels were actually tuned for. Chosen in the 1200-1600 range:
+#: large enough to preserve the fine linework of an illustrated page,
+#: small enough that paper grain/JPEG noise doesn't dwarf fixed-fraction
+#: kernels the way it does at full photo resolution (e.g. 2048px).
+DEFAULT_WORKING_DIMENSION = 1400
+
 
 class UnsupportedFormatError(ValueError):
     """Raised when an input file's extension is not a supported image format."""
@@ -85,6 +95,67 @@ def resize_to_max_dimension(image: np.ndarray, max_dimension: int | None) -> np.
     scale = max_dimension / longest_side
     new_size = (round(width * scale), round(height * scale))
     return cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
+
+
+def derive_kernel_size(
+    working_dimension: int, *, fraction: float, min_value: int = 3, odd: bool = True
+) -> int:
+    """Scale a pixel kernel size to a fraction of the working resolution.
+
+    Engines used to hardcode kernel sizes (bilateral filter diameter,
+    adaptive-threshold block size, morphology kernels, minimum stroke
+    extent) as fixed pixel counts, which are only correct at whatever
+    resolution they happened to be tuned at. Expressing them instead as
+    a fraction of :data:`DEFAULT_WORKING_DIMENSION` lets every engine's
+    kernels scale automatically with the working resolution.
+
+    Parameters
+    ----------
+    working_dimension : int
+        Longest side, in pixels, of the image the kernel will be applied
+        to (typically the working-resolution image an engine receives).
+    fraction : float
+        Desired kernel size as a fraction of ``working_dimension``.
+    min_value : int, optional
+        Smallest allowed kernel size, by default 3 (below which most
+        OpenCV filters degenerate or reject the kernel outright).
+    odd : bool, optional
+        If True (the default), round the result up to the nearest odd
+        value, as required by filters like ``cv2.bilateralFilter`` and
+        ``cv2.adaptiveThreshold`` whose kernel/block size must be odd.
+
+    Returns
+    -------
+    int
+        The derived kernel size, at least ``min_value``.
+    """
+    size = max(min_value, round(working_dimension * fraction))
+    if odd and size % 2 == 0:
+        size += 1
+    return size
+
+
+def default_line_thickness(working_dimension: int) -> int:
+    """Compute a sensible default output line thickness for a given resolution.
+
+    A 1px stroke is a hairline at typical print resolutions and is not
+    practical to color inside; the reference output this project targets
+    uses roughly 2-3px strokes at ~864px wide. Scaling thickness with
+    the working resolution keeps that same visual weight regardless of
+    ``--max-dimension``, instead of a fixed pixel count that reads as
+    heavy at low resolution and vanishingly thin at high resolution.
+
+    Parameters
+    ----------
+    working_dimension : int
+        Longest side, in pixels, of the image being converted.
+
+    Returns
+    -------
+    int
+        Recommended line thickness in pixels, never less than 2.
+    """
+    return max(2, round(working_dimension / 500))
 
 
 def smooth_preserving_edges(
@@ -198,7 +269,7 @@ def convert_image(
     engine: ConversionEngine,
     *,
     line_thickness: int = 1,
-    max_dimension: int | None = None,
+    max_dimension: int | None = DEFAULT_WORKING_DIMENSION,
 ) -> np.ndarray:
     """Resize and run a single image through a conversion engine.
 
@@ -211,8 +282,13 @@ def convert_image(
     line_thickness : int, optional
         Approximate output line thickness in pixels, by default 1.
     max_dimension : int | None, optional
-        If set, the image is downscaled (never upscaled) so its longest
-        side does not exceed this value before conversion, by default None.
+        The working resolution: the image is downscaled (never upscaled)
+        so its longest side does not exceed this value before
+        conversion, by default :data:`DEFAULT_WORKING_DIMENSION`. Every
+        engine assumes it is operating at this scale when deriving its
+        own resolution-dependent kernel sizes (see
+        :func:`derive_kernel_size`); pass ``None`` to convert at the
+        image's native resolution instead.
 
     Returns
     -------

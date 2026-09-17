@@ -9,6 +9,8 @@ import pytest
 
 from coloring_page.pipeline import (
     UnsupportedFormatError,
+    default_line_thickness,
+    derive_kernel_size,
     load_image,
     remove_short_strokes,
     remove_small_specks,
@@ -97,6 +99,32 @@ def test_remove_short_strokes_drops_short_line_below_min_extent() -> None:
     cleaned = remove_short_strokes(image, min_extent=4)
 
     assert np.all(cleaned[15, 5:8] == 255)
+
+
+def test_derive_kernel_size_scales_with_working_dimension() -> None:
+    small = derive_kernel_size(700, fraction=0.01)
+    large = derive_kernel_size(1400, fraction=0.01)
+    assert large >= small
+
+
+def test_derive_kernel_size_respects_min_value() -> None:
+    assert derive_kernel_size(10, fraction=0.01, min_value=5) == 5
+
+
+def test_derive_kernel_size_forces_odd_when_requested() -> None:
+    size = derive_kernel_size(1400, fraction=0.005, odd=True)
+    assert size % 2 == 1
+
+
+def test_derive_kernel_size_allows_even_when_not_requested() -> None:
+    size = derive_kernel_size(1400, fraction=0.005714, min_value=3, odd=False)
+    assert size == round(1400 * 0.005714)
+
+
+def test_default_line_thickness_scales_with_working_dimension() -> None:
+    assert default_line_thickness(1400) == max(2, round(1400 / 500))
+    assert default_line_thickness(500) >= 2
+    assert default_line_thickness(2000) > default_line_thickness(500)
 
 
 def test_remove_small_specks_is_deprecated_alias() -> None:

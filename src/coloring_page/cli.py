@@ -14,6 +14,7 @@ from pathlib import Path
 
 from coloring_page.engines.registry import ENGINES, get_engine
 from coloring_page.pipeline import (
+    DEFAULT_WORKING_DIMENSION,
     SUPPORTED_INPUT_SUFFIXES,
     UnsupportedFormatError,
     convert_image,
@@ -63,8 +64,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-dimension",
         type=int,
-        default=None,
-        help="Downscale the image so neither side exceeds this many pixels (default: no resizing).",
+        default=DEFAULT_WORKING_DIMENSION,
+        help=(
+            "Working resolution: downscale the image so neither side exceeds "
+            f"this many pixels before conversion (default: {DEFAULT_WORKING_DIMENSION})."
+        ),
     )
     return parser
 
