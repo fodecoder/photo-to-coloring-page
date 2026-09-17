@@ -22,12 +22,16 @@ import pytest
 from coloring_page.engines.registry import ENGINES
 from coloring_page.metrics import ink_coverage
 
-_HAS_ANIME2SKETCH_WEIGHTS = (Path("weights") / "anime2sketch.pth").exists()
+_WEIGHTS_REQUIRED_STYLES = {
+    "anime2sketch": Path("weights") / "anime2sketch.pth",
+    "informative_drawings": Path("weights") / "informative_drawings.pth",
+}
 
 
 def _should_skip(style: str) -> str | None:
-    if style == "anime2sketch" and not _HAS_ANIME2SKETCH_WEIGHTS:
-        return "requires a manually downloaded weights/anime2sketch.pth (not bundled)"
+    weights_path = _WEIGHTS_REQUIRED_STYLES.get(style)
+    if weights_path is not None and not weights_path.exists():
+        return f"requires a manually downloaded {weights_path} (not bundled)"
     return None
 
 

@@ -106,6 +106,12 @@ recommended for producing a coloring page (see below).
   outlines, which produces far too much ink coverage and too many
   disconnected fragments to be usable as a coloring page; kept only for
   users who want that textured-sketch look for its own sake.
+- **`informative_drawings`** *(optional, requires setup — see below)* — a
+  pretrained neural network (Chan, Durand, Isola, CVPR 2022) trained on
+  photographs and paintings paired with hand-drawn line art. Recommended
+  over `anime2sketch` for photographed/painted illustrations, since it was
+  actually trained on that kind of source rather than already-clean
+  digital anime line art.
 - **`anime2sketch`** *(optional, requires setup — see below)* — a
   pretrained neural network specifically trained to extract clean line art
   from illustration/anime-style artwork. Only appears as a `--style` choice
@@ -124,6 +130,40 @@ implementing that interface and registered in
 `src/coloring_page/engines/registry.py`; the CLI and pipeline require no
 other changes. This repository does **not** bundle any model weights, and
 the default engine has zero machine-learning dependencies.
+
+### `informative_drawings`
+
+`src/coloring_page/engines/informative_drawings.py` wires in
+[Informative Drawings](https://github.com/carolineec/informative-drawings)
+(MIT License, Copyright (c) 2022 Caroline Chan — see
+`THIRD_PARTY_LICENSES.md`). Its network architecture is vendored into
+`src/coloring_page/engines/_informative_drawings_arch.py`; **no pretrained
+weights are included**. To use it:
+
+1. Install the `ml` extra: `pip install -e ".[ml]"` (adds `torch`).
+2. Download `model.zip` from the official Google Drive link in the
+   [Informative Drawings README](https://github.com/carolineec/informative-drawings#testing),
+   unzip it, and locate `checkpoints/contour_style/netG_A_latest.pth`
+   (`contour_style` is recommended for photographed/printed illustrations;
+   `anime_style` and `opensketch_style` are also included in the same
+   archive).
+3. Save the file to `weights/informative_drawings.pth` (relative to
+   wherever you run the CLI from), to
+   `~/.cache/coloring_page/informative_drawings.pth`, or set the
+   `COLORING_PAGE_INFORMATIVE_DRAWINGS_WEIGHTS` environment variable to
+   point at wherever you saved it (see `.env.example`).
+
+Note: this project deliberately does **not** use the `controlnet_aux`
+package's `LineartDetector`, even though it loads a repackaged copy of
+these same weights and would avoid the manual download above. Its
+`lllyasviel/Annotators` weights mirror on Hugging Face declares "License:
+other" with no license text, so this project can't confirm it carries
+forward the upstream MIT terms -- see `THIRD_PARTY_LICENSES.md` for the
+full reasoning.
+
+Once both steps are done, `informative_drawings` appears as a `--style`
+choice. Without them, it's simply absent from `--help` and the default
+install stays free of ML dependencies.
 
 ### `anime2sketch`
 

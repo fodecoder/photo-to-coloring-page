@@ -27,12 +27,14 @@ dev = [
     "mypy>=1.10",
 ]
 ml = [
-    # Enables the optional `anime2sketch` engine (src/coloring_page/engines/
-    # anime2sketch.py). No model weights are bundled with this project --
-    # after installing this extra, you must still separately download the
-    # Anime2Sketch pretrained weights yourself; see the README's
-    # "Extending with an ML engine" section. See engines/base.py and the
-    # add-conversion-style skill for how to wire up further new engines.
+    # Enables the optional `anime2sketch` and `informative_drawings`
+    # engines (src/coloring_page/engines/anime2sketch.py,
+    # informative_drawings.py). No model weights are bundled with this
+    # project -- after installing this extra, you must still separately
+    # download pretrained weights for whichever engine you use; see the
+    # README's "Extending with an ML engine" section. See engines/base.py
+    # and the add-conversion-style skill for how to wire up further new
+    # engines.
     "torch>=2.0",
 ]
 

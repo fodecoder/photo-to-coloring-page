@@ -34,6 +34,13 @@ except ImportError:
 else:
     ENGINES["anime2sketch"] = Anime2SketchEngine
 
+try:
+    from coloring_page.engines.informative_drawings import InformativeDrawingsEngine
+except ImportError:
+    pass
+else:
+    ENGINES["informative_drawings"] = InformativeDrawingsEngine
+
 
 def get_engine(style: str) -> ConversionEngine:
     """Instantiate the conversion engine registered under ``style``.
