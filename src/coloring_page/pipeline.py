@@ -264,12 +264,51 @@ def remove_small_specks(binary_image: np.ndarray, *, min_area: int = 4) -> np.nd
     return remove_short_strokes(binary_image, min_extent=min_area)
 
 
+class DebugSink:
+    """Writes an engine's intermediate conversion stages to disk.
+
+    Normally only the final line-art image is ever written to disk, so
+    when a result looks wrong there's no way to tell which internal
+    stage (flattening, edge detection, redraw, ...) actually produced
+    the bad output. Passing an instance of this class to
+    :func:`convert_image` (via its ``debug_dir`` argument) lets engines
+    save each stage they go through as a separate, numbered file.
+    """
+
+    def __init__(self, directory: Path) -> None:
+        """Create a sink that writes into ``directory``, creating it if needed.
+
+        Parameters
+        ----------
+        directory : Path
+            Destination directory for saved debug images.
+        """
+        self.directory = directory
+        self.directory.mkdir(parents=True, exist_ok=True)
+        self._stage_count = 0
+
+    def save(self, stage_name: str, image: np.ndarray) -> None:
+        """Write one named intermediate image, prefixed with its stage order.
+
+        Parameters
+        ----------
+        stage_name : str
+            Short, filename-safe label for this stage (e.g. ``"flattened"``).
+        image : np.ndarray
+            The image to save at this stage.
+        """
+        self._stage_count += 1
+        filename = f"{self._stage_count:02d}_{stage_name}.png"
+        cv2.imwrite(str(self.directory / filename), image)
+
+
 def convert_image(
     image: np.ndarray,
     engine: ConversionEngine,
     *,
     line_thickness: int = 1,
     max_dimension: int | None = DEFAULT_WORKING_DIMENSION,
+    debug_dir: Path | None = None,
 ) -> np.ndarray:
     """Resize and run a single image through a conversion engine.
 
@@ -289,6 +328,11 @@ def convert_image(
         own resolution-dependent kernel sizes (see
         :func:`derive_kernel_size`); pass ``None`` to convert at the
         image's native resolution instead.
+    debug_dir : Path | None, optional
+        If given, a :class:`DebugSink` writing into this directory is
+        passed to the engine, which may use it to save intermediate
+        conversion stages for inspection, by default None (no debug
+        output).
 
     Returns
     -------
@@ -296,7 +340,8 @@ def convert_image(
         Grayscale line-art image, shape ``(H, W)``, dtype ``uint8``.
     """
     resized = resize_to_max_dimension(image, max_dimension)
-    return engine.convert(resized, line_thickness=line_thickness)
+    debug_sink = DebugSink(debug_dir) if debug_dir is not None else None
+    return engine.convert(resized, line_thickness=line_thickness, debug=debug_sink)
 
 
 def save_image(image: np.ndarray, path: Path) -> None:

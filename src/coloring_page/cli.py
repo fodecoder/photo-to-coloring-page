@@ -76,6 +76,16 @@ def build_parser() -> argparse.ArgumentParser:
             f"this many pixels before conversion (default: {DEFAULT_WORKING_DIMENSION})."
         ),
     )
+    parser.add_argument(
+        "--debug-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Write intermediate conversion stages (for engines that report "
+            "them) into this directory, for diagnosing unexpected output. In "
+            "batch mode, each input file gets its own subdirectory by stem."
+        ),
+    )
     return parser
 
 
@@ -116,6 +126,7 @@ def run(args: argparse.Namespace) -> int:
 
         for image_path in image_paths:
             destination = args.output / f"{image_path.stem}_coloring{image_path.suffix}"
+            debug_dir = args.debug_dir / image_path.stem if args.debug_dir is not None else None
             try:
                 image = load_image(image_path)
                 result = convert_image(
@@ -123,6 +134,7 @@ def run(args: argparse.Namespace) -> int:
                     engine,
                     line_thickness=thickness,
                     max_dimension=args.max_dimension,
+                    debug_dir=debug_dir,
                 )
                 save_image(result, destination)
                 print(f"Converted {image_path} -> {destination}")
@@ -141,6 +153,7 @@ def run(args: argparse.Namespace) -> int:
         engine,
         line_thickness=thickness,
         max_dimension=args.max_dimension,
+        debug_dir=args.debug_dir,
     )
     save_image(result, args.output)
     print(f"Converted {args.input} -> {args.output}")

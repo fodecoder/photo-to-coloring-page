@@ -108,3 +108,49 @@ def test_batch_mode_empty_directory_returns_error(tmp_path: Path) -> None:
 
     exit_code = main([str(input_dir), str(tmp_path / "out")])
     assert exit_code == 1
+
+
+def test_debug_dir_creates_stage_output_files(
+    tmp_path: Path, synthetic_photo_path: Path
+) -> None:
+    debug_dir = tmp_path / "debug"
+
+    exit_code = main(
+        [
+            str(synthetic_photo_path),
+            str(tmp_path / "out.png"),
+            "--style",
+            "canny",
+            "--debug-dir",
+            str(debug_dir),
+        ]
+    )
+
+    assert exit_code == 0
+    assert any(debug_dir.iterdir())
+
+
+def test_debug_dir_namespaces_per_file_in_batch_mode(tmp_path: Path) -> None:
+    input_dir = tmp_path / "photos"
+    output_dir = tmp_path / "out"
+    debug_dir = tmp_path / "debug"
+    input_dir.mkdir()
+
+    for i in range(2):
+        Image.fromarray(make_synthetic_photo()).save(input_dir / f"photo_{i}.png")
+
+    exit_code = main(
+        [
+            str(input_dir),
+            str(output_dir),
+            "--style",
+            "canny",
+            "--debug-dir",
+            str(debug_dir),
+        ]
+    )
+
+    assert exit_code == 0
+    assert (debug_dir / "photo_0").exists()
+    assert (debug_dir / "photo_1").exists()
+    assert any((debug_dir / "photo_0").iterdir())

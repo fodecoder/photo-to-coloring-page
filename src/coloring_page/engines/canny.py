@@ -5,7 +5,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from coloring_page.engines.base import ConversionEngine
+from coloring_page.engines.base import ConversionEngine, DebugSink
 from coloring_page.pipeline import derive_kernel_size, remove_short_strokes, smooth_preserving_edges
 
 
@@ -38,7 +38,9 @@ class CannyEngine(ConversionEngine):
         self.low_threshold = low_threshold
         self.high_threshold = high_threshold
 
-    def convert(self, image: np.ndarray, *, line_thickness: int = 1) -> np.ndarray:
+    def convert(
+        self, image: np.ndarray, *, line_thickness: int = 1, debug: DebugSink | None = None
+    ) -> np.ndarray:
         """Detect edges with Canny and render them as black lines on white.
 
         See Also
@@ -47,6 +49,8 @@ class CannyEngine(ConversionEngine):
         """
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         denoised = smooth_preserving_edges(gray)
+        if debug is not None:
+            debug.save("denoised", denoised)
 
         low: float | None
         high: float | None
@@ -69,6 +73,8 @@ class CannyEngine(ConversionEngine):
         # L1 approximation overstates diagonal edges relative to
         # horizontal/vertical ones.
         edges = cv2.Canny(denoised, low, high, L2gradient=True)
+        if debug is not None:
+            debug.save("edges", edges)
 
         # Bridge small hairline breaks left by the edge detector before
         # they get interpreted as separate, disconnected strokes.

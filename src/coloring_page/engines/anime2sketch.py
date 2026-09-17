@@ -16,7 +16,7 @@ import numpy as np
 import torch
 
 from coloring_page.engines._anime2sketch_arch import UnetGenerator, build_generator
-from coloring_page.engines.base import ConversionEngine
+from coloring_page.engines.base import ConversionEngine, DebugSink
 from coloring_page.pipeline import remove_short_strokes
 
 #: Environment variable used to point at a local weights file, in place of
@@ -234,7 +234,9 @@ class Anime2SketchEngine(ConversionEngine):
         self._model = model
         return model
 
-    def convert(self, image: np.ndarray, *, line_thickness: int = 1) -> np.ndarray:
+    def convert(
+        self, image: np.ndarray, *, line_thickness: int = 1, debug: DebugSink | None = None
+    ) -> np.ndarray:
         """Run the pretrained network and render its output as line art.
 
         See Also
@@ -265,6 +267,8 @@ class Anime2SketchEngine(ConversionEngine):
         sketch = cv2.resize(
             sketch, (original_width, original_height), interpolation=cv2.INTER_CUBIC
         )
+        if debug is not None:
+            debug.save("raw_sketch", sketch)
 
         if self.binarize:
             low, high = np.percentile(sketch, (2, 98))

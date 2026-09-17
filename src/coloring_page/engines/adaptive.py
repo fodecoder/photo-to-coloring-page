@@ -5,7 +5,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from coloring_page.engines.base import ConversionEngine
+from coloring_page.engines.base import ConversionEngine, DebugSink
 from coloring_page.pipeline import remove_short_strokes, smooth_preserving_edges
 
 
@@ -37,7 +37,9 @@ class AdaptiveEngine(ConversionEngine):
         self.block_size = block_size if block_size % 2 == 1 else block_size + 1
         self.c = c
 
-    def convert(self, image: np.ndarray, *, line_thickness: int = 1) -> np.ndarray:
+    def convert(
+        self, image: np.ndarray, *, line_thickness: int = 1, debug: DebugSink | None = None
+    ) -> np.ndarray:
         """Blur then adaptively threshold the image into line art.
 
         See Also
@@ -54,6 +56,8 @@ class AdaptiveEngine(ConversionEngine):
             self.block_size,
             self.c,
         )
+        if debug is not None:
+            debug.save("thresholded", lines)
         lines = remove_short_strokes(lines)
 
         if line_thickness > 1:

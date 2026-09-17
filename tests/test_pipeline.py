@@ -7,8 +7,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from coloring_page.engines.base import ConversionEngine, DebugSink
 from coloring_page.pipeline import (
     UnsupportedFormatError,
+    convert_image,
     default_line_thickness,
     derive_kernel_size,
     load_image,
@@ -18,6 +20,21 @@ from coloring_page.pipeline import (
     save_image,
     smooth_preserving_edges,
 )
+
+
+class _StubDebugEngine(ConversionEngine):
+    """Minimal engine that reports fixed debug stages, for testing DebugSink wiring in isolation."""
+
+    name = "stub-debug"
+
+    def convert(
+        self, image: np.ndarray, *, line_thickness: int = 1, debug: DebugSink | None = None
+    ) -> np.ndarray:
+        gray = np.full(image.shape[:2], 255, dtype=np.uint8)
+        if debug is not None:
+            debug.save("stage_one", gray)
+            debug.save("stage_two", gray)
+        return gray
 
 
 def test_load_image_missing_path_raises(tmp_path: Path) -> None:
@@ -125,6 +142,26 @@ def test_default_line_thickness_scales_with_working_dimension() -> None:
     assert default_line_thickness(1400) == max(2, round(1400 / 500))
     assert default_line_thickness(500) >= 2
     assert default_line_thickness(2000) > default_line_thickness(500)
+
+
+def test_convert_image_writes_debug_stages_when_debug_dir_given(
+    tmp_path: Path, synthetic_photo: np.ndarray
+) -> None:
+    debug_dir = tmp_path / "debug"
+
+    convert_image(synthetic_photo, _StubDebugEngine(), debug_dir=debug_dir)
+
+    saved = sorted(p.name for p in debug_dir.iterdir())
+    assert saved == ["01_stage_one.png", "02_stage_two.png"]
+
+
+def test_convert_image_skips_debug_output_when_debug_dir_omitted(
+    tmp_path: Path, synthetic_photo: np.ndarray
+) -> None:
+    convert_image(synthetic_photo, _StubDebugEngine())
+
+    # No debug_dir was created anywhere under tmp_path.
+    assert not any(tmp_path.iterdir())
 
 
 def test_remove_small_specks_is_deprecated_alias() -> None:

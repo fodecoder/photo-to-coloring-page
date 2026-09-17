@@ -5,7 +5,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from coloring_page.engines.base import ConversionEngine
+from coloring_page.engines.base import ConversionEngine, DebugSink
 from coloring_page.pipeline import remove_short_strokes
 
 
@@ -59,7 +59,9 @@ class CartoonEngine(ConversionEngine):
         self.color_radius = color_radius
         self.min_region_extent = min_region_extent
 
-    def convert(self, image: np.ndarray, *, line_thickness: int = 1) -> np.ndarray:
+    def convert(
+        self, image: np.ndarray, *, line_thickness: int = 1, debug: DebugSink | None = None
+    ) -> np.ndarray:
         """Segment the image into flat regions and outline their boundaries.
 
         See Also
@@ -67,6 +69,8 @@ class CartoonEngine(ConversionEngine):
         ConversionEngine.convert : Full parameter and return-value contract.
         """
         segmented = cv2.pyrMeanShiftFiltering(image, self.spatial_radius, self.color_radius)
+        if debug is not None:
+            debug.save("segmented", segmented)
         gray_segmented = cv2.cvtColor(segmented, cv2.COLOR_BGR2GRAY)
 
         # A region boundary is any pixel where the segmented (now flat)

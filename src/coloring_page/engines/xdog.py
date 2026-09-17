@@ -5,7 +5,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from coloring_page.engines.base import ConversionEngine
+from coloring_page.engines.base import ConversionEngine, DebugSink
 from coloring_page.pipeline import (
     DEFAULT_WORKING_DIMENSION,
     derive_kernel_size,
@@ -77,7 +77,9 @@ class XDoGEngine(ConversionEngine):
         self.epsilon = epsilon
         self.phi = phi
 
-    def convert(self, image: np.ndarray, *, line_thickness: int = 1) -> np.ndarray:
+    def convert(
+        self, image: np.ndarray, *, line_thickness: int = 1, debug: DebugSink | None = None
+    ) -> np.ndarray:
         """Compute an extended difference-of-Gaussians edge map.
 
         See Also
@@ -111,6 +113,8 @@ class XDoGEngine(ConversionEngine):
         )
         xdog = np.clip(xdog, 0.0, 1.0)
         lines = (xdog * 255).astype(np.uint8)
+        if debug is not None:
+            debug.save("thresholded", lines)
         min_extent = derive_kernel_size(working_dimension, fraction=0.012, min_value=3, odd=False)
         lines = remove_short_strokes(lines, min_extent=min_extent)
 
