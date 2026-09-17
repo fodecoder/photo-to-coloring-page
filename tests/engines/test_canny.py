@@ -34,6 +34,35 @@ def test_higher_thickness_adds_more_ink(synthetic_photo: np.ndarray) -> None:
     assert thick_ink >= thin_ink
 
 
+def test_explicit_thresholds_bypass_auto_gradient_percentile(synthetic_photo: np.ndarray) -> None:
+    auto_engine = CannyEngine()
+    explicit_engine = CannyEngine(low_threshold=10, high_threshold=20)
+
+    auto_result = auto_engine.convert(synthetic_photo)
+    explicit_result = explicit_engine.convert(synthetic_photo)
+
+    # Very low explicit thresholds pick up far more edges than the
+    # gradient-percentile auto mode would on this image, so the two
+    # outputs should differ -- proving the explicit values were actually
+    # used rather than silently overridden by the auto heuristic.
+    assert not np.array_equal(auto_result, explicit_result)
+
+
+def test_ink_coverage_in_reasonable_band() -> None:
+    # Regression test: the previous median-intensity auto-threshold
+    # heuristic produced badly broken contours on light backgrounds.
+    # This band is wide on purpose -- it exists to catch a silent total
+    # failure, not to pin an exact tuning target.
+    image = np.full((96, 96, 3), 250, dtype=np.uint8)
+    image[30:36, 24:72] = 15
+
+    engine = CannyEngine()
+    result = engine.convert(image)
+
+    ink_fraction = float(np.mean(result < 128))
+    assert 0.01 <= ink_fraction <= 0.30
+
+
 def test_isolated_noise_is_cleaned_up(
     synthetic_photo: np.ndarray, noisy_synthetic_photo: np.ndarray
 ) -> None:
