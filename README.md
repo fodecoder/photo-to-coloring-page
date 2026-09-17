@@ -192,6 +192,21 @@ model, confirm its license permits your intended use.
 See `.claude/skills/add-conversion-style/SKILL.md` for the full checklist
 when adding a further new engine.
 
+### Future ML engine candidates
+
+Evaluated but not implemented in this round, in priority order -- each
+would need its own license check before merging:
+
+1. **PidiNet** / **TEED** — lightweight CNN edge detectors (available via
+   `controlnet_aux`), faster than a full generator and closer to a
+   "hand-drawn" line than Canny.
+2. **Sketch Simplification** (Simo-Serra et al., SIGGRAPH 2016/2018) —
+   not an extractor but a second stage: takes rough, noisy line art and
+   produces clean, uniform strokes. Worth trying *in cascade* after
+   `chained`/`skeleton` rather than as a standalone style.
+3. **AniLines** (`zhenglinpan/AniLines-Anime-Lineart-Extractor`) — more
+   recent; license and weight size not yet verified.
+
 ## Running the test suite
 
 ```bash
