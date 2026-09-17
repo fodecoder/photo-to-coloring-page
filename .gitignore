@@ -41,3 +41,11 @@ coverage.xml
 # OS
 .DS_Store
 Thumbs.db
+
+# Local reference/sample images (e.g. copyrighted source material used for
+# manual testing) -- never intended for version control.
+/docs/*.jpg
+/docs/*.jpeg
+/docs/*.png
+/output.png
+/*-output.png

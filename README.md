@@ -78,8 +78,14 @@ Run `coloring-page --help` for the full flag reference.
   differently-blurred copies of the image and sharpens the result with a
   tanh-based threshold. Tends to produce more consistent, artistic-looking
   outlines and handles gradual shading transitions gracefully.
+- **`cartoon`** — quantizes the image to a small flat color palette
+  (k-means) and draws lines only at the boundaries between quantized
+  regions. Unlike the other three styles, it doesn't key off intensity
+  gradients at all, so painted/illustrated sources with lots of internal
+  texture, shading, or glow effects don't produce stippling noise. Best
+  suited to painterly illustrations rather than photographs.
 
-All three are implemented in `src/coloring_page/engines/`.
+All four are implemented in `src/coloring_page/engines/`.
 
 ## Extending with an ML engine
 

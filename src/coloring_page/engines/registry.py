@@ -10,12 +10,14 @@ from __future__ import annotations
 from coloring_page.engines.adaptive import AdaptiveEngine
 from coloring_page.engines.base import ConversionEngine
 from coloring_page.engines.canny import CannyEngine
+from coloring_page.engines.cartoon import CartoonEngine
 from coloring_page.engines.xdog import XDoGEngine
 
 ENGINES: dict[str, type[ConversionEngine]] = {
     "canny": CannyEngine,
     "adaptive": AdaptiveEngine,
     "xdog": XDoGEngine,
+    "cartoon": CartoonEngine,
 }
 
 
