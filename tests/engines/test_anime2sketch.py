@@ -16,6 +16,70 @@ import pytest
 torch = pytest.importorskip("torch")
 
 
+def test_resize_and_pad_preserves_aspect_ratio() -> None:
+    from coloring_page.engines.anime2sketch import _resize_and_pad
+
+    # A clearly non-square, portrait-oriented image (2:3 aspect ratio).
+    rgb = np.zeros((96, 64, 3), dtype=np.uint8)
+
+    padded, (content_height, content_width) = _resize_and_pad(rgb, load_size=256)
+
+    # The pre-pad content should preserve the original aspect ratio
+    # (within rounding), unlike a square-forcing resize which would
+    # distort it to 1:1.
+    original_ratio = rgb.shape[0] / rgb.shape[1]
+    content_ratio = content_height / content_width
+    assert content_ratio == pytest.approx(original_ratio, rel=0.02)
+
+    # Both padded dimensions must be multiples of 256 for the network's
+    # 8 downsampling stages.
+    assert padded.shape[0] % 256 == 0
+    assert padded.shape[1] % 256 == 0
+    # The longest side should hit load_size before any padding.
+    assert max(content_height, content_width) == 256
+
+
+def test_resize_and_pad_square_input_needs_no_padding() -> None:
+    from coloring_page.engines.anime2sketch import _resize_and_pad
+
+    rgb = np.zeros((64, 64, 3), dtype=np.uint8)
+
+    padded, (content_height, content_width) = _resize_and_pad(rgb, load_size=256)
+
+    assert (content_height, content_width) == (256, 256)
+    assert padded.shape[:2] == (256, 256)
+
+
+def test_hysteresis_threshold_keeps_weak_ink_connected_to_strong_ink() -> None:
+    from coloring_page.engines.anime2sketch import _hysteresis_threshold
+
+    gray = np.full((30, 30), 240, dtype=np.uint8)
+    # A strong (very dark) stroke...
+    gray[10, 10:20] = 5
+    # ...directly connected to a weak (faint) continuation of it.
+    gray[10, 20:24] = 90
+
+    result = _hysteresis_threshold(gray, strong_threshold=20.0, weak_threshold=100.0)
+
+    assert np.all(result[10, 10:20] == 0)
+    assert np.all(result[10, 20:24] == 0)
+
+
+def test_hysteresis_threshold_drops_weak_ink_not_connected_to_strong_ink() -> None:
+    from coloring_page.engines.anime2sketch import _hysteresis_threshold
+
+    gray = np.full((30, 30), 240, dtype=np.uint8)
+    # A strong stroke, isolated from...
+    gray[5, 5:15] = 5
+    # ...a faint, disconnected speck elsewhere in the image.
+    gray[25, 25] = 90
+
+    result = _hysteresis_threshold(gray, strong_threshold=20.0, weak_threshold=100.0)
+
+    assert np.all(result[5, 5:15] == 0)
+    assert result[25, 25] == 255
+
+
 def test_generator_forward_pass_produces_expected_shape() -> None:
     from coloring_page.engines._anime2sketch_arch import build_generator
 

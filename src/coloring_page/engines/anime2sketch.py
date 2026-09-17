@@ -54,6 +54,89 @@ def _resolve_weights_path(explicit_path: str | Path | None) -> Path:
     return DEFAULT_WEIGHTS_PATH
 
 
+def _resize_and_pad(rgb: np.ndarray, load_size: int) -> tuple[np.ndarray, tuple[int, int]]:
+    """Resize preserving aspect ratio, then reflect-pad to a multiple of 256.
+
+    The network has 8 downsampling stages, so both spatial dimensions
+    fed into it must be multiples of 256. Resizing directly to a
+    ``load_size x load_size`` square (the previous approach) satisfies
+    that but distorts non-square photos, squashing them before
+    inference and stretching the output back afterwards. Scaling the
+    longest side to ``load_size`` and padding the shorter side up to the
+    next multiple of 256 keeps the network's input square-multiple
+    requirement without changing the image's proportions. Reflection
+    padding (rather than a solid color) avoids introducing a hard,
+    artificial edge along the padded border that the network could
+    otherwise render as a spurious line.
+
+    Parameters
+    ----------
+    rgb : np.ndarray
+        RGB image, shape ``(H, W, 3)``.
+    load_size : int
+        Target size, in pixels, for the image's longest side.
+
+    Returns
+    -------
+    tuple[np.ndarray, tuple[int, int]]
+        The padded image, and the ``(height, width)`` of the resized
+        (pre-padding) content -- needed to crop the padding back off the
+        network's output before the final resize to the original size.
+    """
+    height, width = rgb.shape[:2]
+    scale = load_size / max(height, width)
+    new_height = max(1, round(height * scale))
+    new_width = max(1, round(width * scale))
+    resized = cv2.resize(rgb, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+
+    pad_bottom = (-new_height) % 256
+    pad_right = (-new_width) % 256
+    padded = cv2.copyMakeBorder(resized, 0, pad_bottom, 0, pad_right, cv2.BORDER_REFLECT)
+    return padded, (new_height, new_width)
+
+
+def _hysteresis_threshold(
+    gray: np.ndarray, *, strong_threshold: float, weak_threshold: float
+) -> np.ndarray:
+    """Binarize a soft grayscale sketch, keeping weak ink connected to strong ink.
+
+    A single global Otsu threshold picks one cutoff for the whole image,
+    which is a poor fit here: the sketch's histogram is dominated (often
+    ~95%) by near-white background, so Otsu's variance-splitting
+    criterion tends to land in a spot that either keeps faint pencil
+    lines as isolated noise or discards them outright. Mirroring how
+    ``cv2.Canny`` itself avoids this (two thresholds plus connectivity)
+    keeps faint linework that is actually connected to strong linework,
+    while still dropping faint, isolated specks.
+
+    Parameters
+    ----------
+    gray : np.ndarray
+        Single-channel grayscale sketch, shape ``(H, W)``, dtype
+        ``uint8``, where lower values are darker (more ink-like).
+    strong_threshold : float
+        Pixel intensity at or below which a pixel is unambiguous ink.
+    weak_threshold : float
+        Pixel intensity at or below which a pixel is a candidate for ink
+        if connected to a strong pixel. Must be ``>= strong_threshold``.
+
+    Returns
+    -------
+    np.ndarray
+        Single-channel ``uint8`` image, ``0`` for kept ink pixels and
+        ``255`` for background, same shape as ``gray``.
+    """
+    strong_mask = gray <= strong_threshold
+    weak_mask = gray <= weak_threshold
+
+    num_labels, labels = cv2.connectedComponents(weak_mask.astype(np.uint8), connectivity=8)
+    strong_labels = np.unique(labels[strong_mask])
+    strong_labels = strong_labels[strong_labels != 0]
+
+    keep = np.isin(labels, strong_labels)
+    return np.where(keep, 0, 255).astype(np.uint8)
+
+
 _WEIGHTS_HELP = (
     "Anime2Sketch pretrained weights not found at {path}.\n"
     "This engine requires weights that this project does not bundle or "
@@ -98,10 +181,13 @@ class Anime2SketchEngine(ConversionEngine):
             :func:`_resolve_weights_path` (env var, then
             ``./weights/anime2sketch.pth``, then the per-user cache dir).
         load_size : int, optional
-            Square size (in pixels) the image is resized to before being
-            fed through the network, by default 512, matching the size the
-            upstream pretrained weights were trained/tested with. Must be
-            a multiple of 256 (the network has 8 downsampling stages).
+            Target size (in pixels) for the image's longest side before
+            being fed through the network, by default 512, matching the
+            size the upstream pretrained weights were trained/tested
+            with. The shorter side is scaled proportionally, then both
+            sides are reflect-padded up to the next multiple of 256 (the
+            network has 8 downsampling stages) -- see
+            :func:`_resize_and_pad`. Must itself be a multiple of 256.
         gamma : float, optional
             Gamma-correction factor applied to the input image before
             inference, by default 1.6. On source images with large dark
@@ -111,10 +197,12 @@ class Anime2SketchEngine(ConversionEngine):
             (1/gamma)`) avoids that failure mode. Set to 1.0 to disable.
         binarize : bool, optional
             Whether to threshold the network's soft, pencil-shaded output
-            into crisp black-on-white ink lines (Otsu's method, after a
-            percentile contrast stretch), by default True. This matches a
-            printed coloring-book page far better than the raw grayscale
-            sketch; set to False to keep the soft shading instead.
+            into crisp black-on-white ink lines (a percentile contrast
+            stretch followed by hysteresis thresholding, see
+            :func:`_hysteresis_threshold`), by default True. This matches
+            a printed coloring-book page far better than the raw
+            grayscale sketch; set to False to keep the soft shading
+            instead.
         """
         self.weights_path = _resolve_weights_path(weights_path)
         self.load_size = load_size
@@ -157,10 +245,10 @@ class Anime2SketchEngine(ConversionEngine):
         original_height, original_width = image.shape[:2]
 
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        resized = cv2.resize(rgb, (self.load_size, self.load_size), interpolation=cv2.INTER_CUBIC)
+        padded, (content_height, content_width) = _resize_and_pad(rgb, self.load_size)
         if self.gamma != 1.0:
-            resized = (255 * (resized / 255.0) ** (1.0 / self.gamma)).astype(np.uint8)
-        tensor = torch.from_numpy(resized).float().permute(2, 0, 1).unsqueeze(0) / 255.0
+            padded = (255 * (padded / 255.0) ** (1.0 / self.gamma)).astype(np.uint8)
+        tensor = torch.from_numpy(padded).float().permute(2, 0, 1).unsqueeze(0) / 255.0
         tensor = (tensor - 0.5) / 0.5  # [0, 1] -> [-1, 1]
 
         with torch.no_grad():
@@ -170,6 +258,10 @@ class Anime2SketchEngine(ConversionEngine):
         # rescale to a standard [0, 255] grayscale line-art image.
         sketch = output.squeeze().clamp(-1, 1).cpu().numpy()
         sketch = ((sketch + 1) / 2 * 255).astype(np.uint8)
+        # Crop the reflect-padding back off at network resolution before
+        # resizing to the original size, so padded content never gets
+        # blended into the final image.
+        sketch = sketch[:content_height, :content_width]
         sketch = cv2.resize(
             sketch, (original_width, original_height), interpolation=cv2.INTER_CUBIC
         )
@@ -180,7 +272,11 @@ class Anime2SketchEngine(ConversionEngine):
                 (sketch.astype(np.float32) - low) / max(high - low, 1) * 255, 0, 255
             )
             sketch = stretched.astype(np.uint8)
-            _, sketch = cv2.threshold(sketch, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            strong_threshold = float(np.percentile(sketch, 5.0))
+            weak_threshold = float(np.percentile(sketch, 15.0))
+            sketch = _hysteresis_threshold(
+                sketch, strong_threshold=strong_threshold, weak_threshold=weak_threshold
+            )
 
         if line_thickness > 1:
             kernel = np.ones((line_thickness, line_thickness), np.uint8)
