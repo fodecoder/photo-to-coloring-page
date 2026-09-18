@@ -52,3 +52,4 @@ Thumbs.db
 
 # Downloaded ML model weights -- never bundled in the repository.
 /weights/
+outputTests
