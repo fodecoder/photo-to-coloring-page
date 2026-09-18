@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import cv2
 import numpy as np
@@ -61,6 +61,53 @@ def _resolve_weights_path(explicit_path: str | Path | None) -> Path:
     return DEFAULT_WEIGHTS_PATH
 
 
+def _resize_short_side(image: np.ndarray, resolution: int, *, multiple: int = 64) -> np.ndarray:
+    """Scale so the image's short side is ``resolution``, rounded to a multiple of ``multiple``.
+
+    Matches ``controlnet_aux.util.resize_image`` verbatim (as of
+    huggingface/controlnet_aux's ``master`` branch), which is what the
+    redistributed ``lllyasviel/Annotators`` weights are exercised with by
+    ControlNet's own "lineart" preprocessor::
+
+        k = resolution / min(H, W)
+        H, W = round(H * k / 64) * 64, round(W * k / 64) * 64
+        interpolation = LANCZOS4 if k > 1 else AREA
+
+    Each side is rounded to the nearest multiple of ``multiple``
+    *independently*, which can shift the aspect ratio very slightly (a
+    handful of pixels) -- an intentional, minor tradeoff upstream accepts
+    to keep both dimensions compatible with the network's downsampling
+    stages, not a bug in this reimplementation. A fully-convolutional
+    generator has no fixed input size, but it does have a scale it was
+    trained at: feeding it a squashed square (this engine's previous
+    behavior) changes both the aspect ratio and the apparent scale of
+    every object in the scene, which is a much larger distortion than
+    this rounding.
+
+    Parameters
+    ----------
+    image : np.ndarray
+        Image to resize, shape ``(H, W, ...)``.
+    resolution : int
+        Target size, in pixels, for the image's shorter side before
+        rounding.
+    multiple : int, optional
+        Round each output dimension to the nearest multiple of this
+        value, by default 64 (the network's downsampling factor).
+
+    Returns
+    -------
+    np.ndarray
+        Resized copy of ``image``.
+    """
+    height, width = image.shape[:2]
+    scale = resolution / min(height, width)
+    new_height = max(multiple, round(height * scale / multiple) * multiple)
+    new_width = max(multiple, round(width * scale / multiple) * multiple)
+    interpolation = cv2.INTER_LANCZOS4 if scale > 1 else cv2.INTER_AREA
+    return cv2.resize(image, (new_width, new_height), interpolation=interpolation)
+
+
 _WEIGHTS_HELP = (
     "Informative Drawings pretrained weights not found at {path}.\n"
     "This engine requires weights that this project does not bundle:\n"
@@ -99,7 +146,7 @@ class InformativeDrawingsEngine(ConversionEngine):
         self,
         weights_path: str | Path | None = None,
         n_residual_blocks: int = 3,
-        load_size: int = 256,
+        detect_resolution: int = 1024,
         postprocess_strategy: Literal["nms", "hysteresis"] = "nms",
     ) -> None:
         """Store where to find the pretrained weights and inference options.
@@ -116,36 +163,40 @@ class InformativeDrawingsEngine(ConversionEngine):
             matching the upstream project's released checkpoints. Must
             match whatever checkpoint ``weights_path`` points to, or
             loading its ``state_dict`` will fail.
-        load_size : int, optional
-            Square size (in pixels) the image is resized to before being
-            fed through the network, by default 256, matching the size
-            the upstream pretrained checkpoints were trained/tested
-            with.
+        detect_resolution : int, optional
+            Target size, in pixels, for the image's *short* side before
+            being fed through the network (see :func:`_resize_short_side`),
+            by default 1024. Previously this resized to a 256x256
+            *square*, which both distorted geometry (squashing every
+            aspect ratio to 1:1) and produced a soft output too coarse to
+            skeletonize cleanly (see ``postprocess_strategy`` below and
+            ``docs/DIAGNOSIS.md`` #3). Named to match
+            ``controlnet_aux.LineartDetector``'s own parameter, whose
+            preprocessing this mirrors -- not ``load_size``, since it no
+            longer targets a square.
         postprocess_strategy : {"nms", "hysteresis"}, optional
             Centerline-extraction strategy passed to
             :func:`~coloring_page.postprocess.soft_map_to_line_art`, by
             default ``"nms"`` (:func:`~coloring_page.postprocess.gradient_edges`).
-            That default is a deliberate, temporary exception to
+            That default is a deliberate exception to
             ``soft_map_to_line_art``'s own default of ``"hysteresis"``:
             ``"nms"`` doubles every stroke into its two edges rather than
-            a true centerline (see that function's docstring), which is a
-            real bug, but this network's soft output at its current
-            256x256 working resolution (see the resize this class does in
-            :meth:`soft_map`) is wide and blurry, and skeletonizing that
-            down to a proper 1px centerline collapses its ink coverage
-            from ~13% to ~2% -- below this project's 3-7% admissibility
-            band -- which crashes recall far more than the doubling bug
-            costs precision. Measured with ``scripts/compare.py``:
-            switching to ``"hysteresis"`` before the resize bug is fixed
-            drops this engine's ``f1_normalized`` on all 3 reference
-            pairs (e.g. 0.059 -> 0.000 on ``starting-image.jpeg``).
-            Revisit this default once the resize bug is fixed and/or
+            a true centerline (see that function's docstring), which was
+            expected to stop being a net win once ``detect_resolution``
+            was fixed (it no longer needs to compensate for an
+            excessively blurry soft map). Re-measured at
+            ``detect_resolution=1024`` with ``scripts/compare.py`` after
+            that fix, it still isn't: ``"nms"`` ties or wins on
+            ``f1_normalized`` on all 3 reference pairs (0.500 vs 0.503,
+            0.678 vs 0.609, 0.265 vs 0.230) -- its higher recall still
+            outweighs its lower precision here. Revisit if
             ``hysteresis_centerline``'s thresholds are retuned for this
-            network's output.
+            network's output, or after Phase 3's checkpoint choice
+            changes the soft map's character.
         """
         self.weights_path = _resolve_weights_path(weights_path)
         self.n_residual_blocks = n_residual_blocks
-        self.load_size = load_size
+        self.detect_resolution = detect_resolution
         self.postprocess_strategy = postprocess_strategy
         self._model: Generator | None = None
 
@@ -186,6 +237,46 @@ class InformativeDrawingsEngine(ConversionEngine):
         self._model = model
         return model
 
+    def _infer(self, image: np.ndarray) -> np.ndarray:
+        """Run the network at ``detect_resolution``, without resizing the result.
+
+        Shared by :meth:`soft_map` (which upscales the result back to
+        ``image``'s own size, for callers like
+        :class:`~coloring_page.engines.gated.GatedEngine` that need it
+        pixel-aligned with other same-resolution masks) and :meth:`convert`
+        (which keeps it at this sharper working resolution through
+        binarization, only resizing the final redrawn line art -- see
+        that method's docstring for why the difference matters).
+
+        Parameters
+        ----------
+        image : np.ndarray
+            BGR image, shape ``(H, W, 3)``, dtype ``uint8``.
+
+        Returns
+        -------
+        np.ndarray
+            Single-channel ``uint8`` image at the network's own working
+            resolution (short side ``detect_resolution``, rounded to a
+            multiple of 64 -- see :func:`_resize_short_side`), lower
+            values = more ink-like (project convention).
+        """
+        model = self._get_model()
+        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        resized = _resize_short_side(rgb, self.detect_resolution)
+        tensor = torch.from_numpy(resized).float().permute(2, 0, 1).unsqueeze(0) / 255.0
+
+        with torch.no_grad():
+            output = model(tensor)
+
+        # The generator's Sigmoid output is already in [0, 1] with the
+        # same polarity this project uses (0 = ink, 1 = background), the
+        # same convention the upstream project itself relies on when
+        # saving output directly via torchvision's save_image -- no
+        # inversion needed, just rescaling to uint8.
+        sketch = output.squeeze().clamp(0, 1).cpu().numpy()
+        return cast(np.ndarray, (sketch * 255).astype(np.uint8))
+
     def soft_map(self, image: np.ndarray) -> np.ndarray:
         """Run the pretrained network and return its raw soft grayscale output.
 
@@ -206,25 +297,10 @@ class InformativeDrawingsEngine(ConversionEngine):
             Single-channel ``uint8`` image, same ``(H, W)`` as ``image``,
             lower values = more ink-like (project convention).
         """
-        model = self._get_model()
         original_height, original_width = image.shape[:2]
-
-        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        resized = cv2.resize(rgb, (self.load_size, self.load_size), interpolation=cv2.INTER_CUBIC)
-        tensor = torch.from_numpy(resized).float().permute(2, 0, 1).unsqueeze(0) / 255.0
-
-        with torch.no_grad():
-            output = model(tensor)
-
-        # The generator's Sigmoid output is already in [0, 1] with the
-        # same polarity this project uses (0 = ink, 1 = background), the
-        # same convention the upstream project itself relies on when
-        # saving output directly via torchvision's save_image -- no
-        # inversion needed, just rescaling to uint8.
-        sketch = output.squeeze().clamp(0, 1).cpu().numpy()
-        sketch = (sketch * 255).astype(np.uint8)
+        sketch = self._infer(image)
         upscaled: np.ndarray = cv2.resize(
-            sketch, (original_width, original_height), interpolation=cv2.INTER_CUBIC
+            sketch, (original_width, original_height), interpolation=cv2.INTER_LINEAR
         )
         return upscaled
 
@@ -233,14 +309,30 @@ class InformativeDrawingsEngine(ConversionEngine):
     ) -> np.ndarray:
         """Run the pretrained network and render its output as line art.
 
+        Binarizes and redraws the network's soft output at its own
+        working resolution, then resizes the *finished* line art back to
+        ``image``'s size -- not the other way around. Upscaling the raw
+        soft map first (this engine's previous behavior) turns each
+        network-resolution stroke into a several-pixel-wide blur before
+        it's ever thresholded, which is what made a clean centerline
+        extraction (:func:`~coloring_page.postprocess.hysteresis_centerline`)
+        impossible; resizing the already-thin, already-redrawn geometry
+        instead preserves it.
+
         See Also
         --------
         ConversionEngine.convert : Full parameter and return-value contract.
         """
-        sketch = self.soft_map(image)
+        sketch = self._infer(image)
         if debug is not None:
             debug.save("raw_sketch", sketch)
 
-        return soft_map_to_line_art(
+        line_art = soft_map_to_line_art(
             sketch, strategy=self.postprocess_strategy, line_thickness=line_thickness
         )
+        original_height, original_width = image.shape[:2]
+        if line_art.shape[:2] != (original_height, original_width):
+            line_art = cv2.resize(
+                line_art, (original_width, original_height), interpolation=cv2.INTER_LINEAR
+            )
+        return line_art

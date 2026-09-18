@@ -72,6 +72,21 @@ def test_mismatched_checkpoint_reports_missing_keys(tmp_path: Path) -> None:
         engine.convert(dummy_photo)
 
 
+def test_resize_short_side_targets_short_side_and_rounds_to_multiple() -> None:
+    from coloring_page.engines.informative_drawings import _resize_short_side
+
+    image = np.zeros((300, 600, 3), dtype=np.uint8)  # short side = 300 (height)
+    resized = _resize_short_side(image, 512, multiple=64)
+
+    height, width = resized.shape[:2]
+    assert height % 64 == 0
+    assert width % 64 == 0
+    # Short side (height) should land near the requested 512, not the
+    # long side -- squashing to a square was the bug this fixes.
+    assert abs(height - 512) < 64
+    assert width > height  # aspect ratio roughly preserved, not squared off
+
+
 def test_registered_only_when_torch_available() -> None:
     from coloring_page.engines.registry import ENGINES
 
@@ -99,6 +114,26 @@ _SKIP_NO_WEIGHTS = pytest.mark.skipif(
     not _HAS_REAL_WEIGHTS,
     reason="requires a manually downloaded weights/informative_drawings.pth (not bundled)",
 )
+
+
+@_SKIP_NO_WEIGHTS
+def test_soft_map_polarity_is_mostly_background(synthetic_photo: np.ndarray) -> None:
+    """The network's raw output must be mostly background, not mostly ink.
+
+    ``soft_map``'s docstring asserts the generator's Sigmoid output needs
+    no inversion (0 = ink, 1 = background, same as this project's
+    convention). A real photo's line-art extraction should be dominated
+    by background -- if that polarity assumption were ever wrong (e.g. a
+    checkpoint or architecture mismatch flipping the sign), the output
+    would be mostly dark instead, which this catches directly rather than
+    relying on the comment being correct.
+    """
+    from coloring_page.engines.informative_drawings import InformativeDrawingsEngine
+
+    engine = InformativeDrawingsEngine()
+    sketch = engine.soft_map(synthetic_photo)
+
+    assert sketch.mean() > 128
 
 
 @_SKIP_NO_WEIGHTS
