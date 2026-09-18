@@ -41,6 +41,10 @@ except ImportError:
 else:
     ENGINES["informative_drawings"] = InformativeDrawingsEngine
 
+    from coloring_page.engines.gated import GatedEngine
+
+    ENGINES["gated"] = GatedEngine
+
 
 def get_engine(style: str) -> ConversionEngine:
     """Instantiate the conversion engine registered under ``style``.

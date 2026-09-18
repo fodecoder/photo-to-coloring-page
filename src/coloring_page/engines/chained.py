@@ -9,6 +9,76 @@ import numpy as np
 
 from coloring_page.engines.base import ConversionEngine, DebugSink
 from coloring_page.pipeline import derive_kernel_size, remove_short_strokes
+from coloring_page.postprocess import redraw_segments
+
+
+def detect_edge_chains(
+    image: np.ndarray,
+    *,
+    sigma_color: float = 35.0,
+    sigma_space: float = 6.0,
+    num_iterations: int = 4,
+    gradient_threshold: float = 36.0,
+    anchor_threshold: float = 8.0,
+    min_path_length: int = 30,
+    edge_sigma: float = 1.5,
+    nfa_validation: bool = True,
+    debug: DebugSink | None = None,
+) -> tuple[np.ndarray, list[np.ndarray]]:
+    """Flatten texture and detect connected edge chains via EdgeDrawing.
+
+    The first two stages of :class:`ChainedEngine`, split out so other
+    engines (e.g. :class:`~coloring_page.engines.gated.GatedEngine`) can
+    reuse the same flatten+chain detection without duplicating it or
+    running a full :class:`ChainedEngine` conversion just to get its
+    intermediate edge chains.
+
+    Parameters
+    ----------
+    image : np.ndarray
+        BGR image, shape ``(H, W, 3)``, dtype ``uint8``.
+    sigma_color, sigma_space, num_iterations, gradient_threshold,
+    anchor_threshold, min_path_length, edge_sigma, nfa_validation :
+        See :class:`ChainedEngine`'s constructor for what each parameter
+        controls.
+    debug : DebugSink | None, optional
+        If given, the flattened image and edge-chain map are saved as
+        debug stages.
+
+    Returns
+    -------
+    tuple[np.ndarray, list[np.ndarray]]
+        The flattened image's grayscale conversion, and the list of edge
+        chain segments (each an ``Nx1x2`` int32 point array) from
+        ``cv2.ximgproc.EdgeDrawing.getSegments()``.
+    """
+    flattened = cv2.ximgproc.rollingGuidanceFilter(
+        image, d=-1, sigmaColor=sigma_color, sigmaSpace=sigma_space, numOfIter=num_iterations
+    )
+    if debug is not None:
+        debug.save("flattened", flattened)
+    gray = cv2.cvtColor(flattened, cv2.COLOR_BGR2GRAY)
+
+    edge_drawing = cv2.ximgproc.createEdgeDrawing()
+    params = cv2.ximgproc.EdgeDrawing.Params()
+    params.GradientThresholdValue = int(gradient_threshold)
+    params.AnchorThresholdValue = int(anchor_threshold)
+    params.MinPathLength = min_path_length
+    params.Sigma = edge_sigma
+    params.NFAValidation = nfa_validation
+    edge_drawing.setParams(params)
+    edge_drawing.detectEdges(gray)
+    # cv2's stub types getSegments() as Sequence[Sequence[Point]], but it
+    # actually returns a tuple of Nx2 int32 ndarrays; cast to what
+    # approxPolyDP/polylines actually need.
+    segments = cast("list[np.ndarray]", edge_drawing.getSegments())
+
+    if debug is not None:
+        edge_map = np.full(gray.shape, 255, dtype=np.uint8)
+        cv2.polylines(edge_map, list(segments), isClosed=False, color=0, thickness=1)
+        debug.save("edge_chains", edge_map)
+
+    return gray, segments
 
 
 class ChainedEngine(ConversionEngine):
@@ -110,43 +180,25 @@ class ChainedEngine(ConversionEngine):
         --------
         ConversionEngine.convert : Full parameter and return-value contract.
         """
-        flattened = cv2.ximgproc.rollingGuidanceFilter(
+        gray, segments = detect_edge_chains(
             image,
-            d=-1,
-            sigmaColor=self.sigma_color,
-            sigmaSpace=self.sigma_space,
-            numOfIter=self.num_iterations,
+            sigma_color=self.sigma_color,
+            sigma_space=self.sigma_space,
+            num_iterations=self.num_iterations,
+            gradient_threshold=self.gradient_threshold,
+            anchor_threshold=self.anchor_threshold,
+            min_path_length=self.min_path_length,
+            edge_sigma=self.edge_sigma,
+            nfa_validation=self.nfa_validation,
+            debug=debug,
         )
-        if debug is not None:
-            debug.save("flattened", flattened)
-        gray = cv2.cvtColor(flattened, cv2.COLOR_BGR2GRAY)
 
-        edge_drawing = cv2.ximgproc.createEdgeDrawing()
-        params = cv2.ximgproc.EdgeDrawing.Params()
-        params.GradientThresholdValue = int(self.gradient_threshold)
-        params.AnchorThresholdValue = int(self.anchor_threshold)
-        params.MinPathLength = self.min_path_length
-        params.Sigma = self.edge_sigma
-        params.NFAValidation = self.nfa_validation
-        edge_drawing.setParams(params)
-        edge_drawing.detectEdges(gray)
-        # cv2's stub types getSegments() as Sequence[Sequence[Point]], but it
-        # actually returns a tuple of Nx2 int32 ndarrays; cast to what
-        # approxPolyDP/polylines actually need.
-        segments = cast("list[np.ndarray]", edge_drawing.getSegments())
-
-        if debug is not None:
-            edge_map = np.full(gray.shape, 255, dtype=np.uint8)
-            cv2.polylines(edge_map, list(segments), isClosed=False, color=0, thickness=1)
-            debug.save("edge_chains", edge_map)
-
-        canvas = np.full(gray.shape, 255, dtype=np.uint8)
-        for segment in segments:
-            approx = cv2.approxPolyDP(segment, self.polyline_epsilon, closed=False)
-            cv2.polylines(
-                canvas, [approx], isClosed=False, color=0, thickness=line_thickness,
-                lineType=cv2.LINE_AA,
-            )
+        canvas = redraw_segments(
+            segments,
+            gray.shape,
+            polyline_epsilon=self.polyline_epsilon,
+            line_thickness=line_thickness,
+        )
         if debug is not None:
             debug.save("redraw", canvas)
 

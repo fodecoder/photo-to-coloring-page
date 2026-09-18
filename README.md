@@ -122,6 +122,20 @@ recommended for producing a coloring page (see below).
   before inference (avoids the network collapsing large dark/shadowed
   regions into a solid black blob) and binarizes its output by default
   for crisp, printable ink lines instead of soft pencil shading.
+- **`gated`** *(experimental, optional — requires `informative_drawings`'
+  setup)* — runs `chained`'s edge-chain detection permissively, then
+  discards chains the `informative_drawings` network isn't confident lie
+  on real ink, keeping only the survivors. The idea: `chained` already
+  finds most real strokes but can't distinguish an object outline from
+  photographic texture (water, foliage) by gradient magnitude alone, and
+  the network can make exactly that distinction. **Measured result**:
+  this does not currently beat plain `chained` on this project's
+  reference images — gating raises precision but recall falls off faster
+  than precision rises at every threshold tested, so average boundary F1
+  peaks at the no-op threshold (nothing gated) and declines from there.
+  Kept registered for experimentation, not part of the recommended set;
+  see `engines/gated.py`'s docstring for the full measurement and ideas
+  for a better gating aggregate.
 
 All built-in styles are implemented in `src/coloring_page/engines/`.
 

@@ -326,6 +326,55 @@ def redraw_centerline(
     return canvas
 
 
+def redraw_segments(
+    segments: list[np.ndarray],
+    shape: tuple[int, int],
+    *,
+    polyline_epsilon: float = 1.2,
+    line_thickness: int = 1,
+) -> np.ndarray:
+    """Smooth and redraw already-traced point-chain segments at a uniform width.
+
+    Like :func:`redraw_centerline`, but for input that is already a list
+    of connected point sequences (e.g. ``cv2.ximgproc.EdgeDrawing``'s
+    ``getSegments()``) rather than a binary mask -- skips the
+    ``cv2.findContours`` tracing step :func:`redraw_centerline` needs,
+    since these segments are already traced. Shared by
+    :class:`~coloring_page.engines.chained.ChainedEngine` and
+    :class:`~coloring_page.engines.gated.GatedEngine`.
+
+    Parameters
+    ----------
+    segments : list[np.ndarray]
+        Point-chain segments, each an ``Nx1x2`` or ``Nx2`` int32 array.
+    shape : tuple[int, int]
+        ``(height, width)`` of the output canvas.
+    polyline_epsilon : float, optional
+        ``cv2.approxPolyDP`` tolerance used to smooth each segment before
+        redrawing, in pixels, by default 1.2.
+    line_thickness : int, optional
+        Output stroke width in pixels, by default 1.
+
+    Returns
+    -------
+    np.ndarray
+        Single-channel ``uint8`` image, project convention: ``0`` = ink,
+        ``255`` = background.
+    """
+    canvas = np.full(shape, 255, dtype=np.uint8)
+    for segment in segments:
+        approx = cv2.approxPolyDP(segment, polyline_epsilon, closed=False)
+        cv2.polylines(
+            canvas,
+            [approx],
+            isClosed=False,
+            color=0,
+            thickness=line_thickness,
+            lineType=cv2.LINE_AA,
+        )
+    return canvas
+
+
 def soft_map_to_line_art(
     soft: np.ndarray,
     *,

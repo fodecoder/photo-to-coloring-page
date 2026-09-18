@@ -174,14 +174,25 @@ class InformativeDrawingsEngine(ConversionEngine):
         self._model = model
         return model
 
-    def convert(
-        self, image: np.ndarray, *, line_thickness: int = 1, debug: DebugSink | None = None
-    ) -> np.ndarray:
-        """Run the pretrained network and render its output as line art.
+    def soft_map(self, image: np.ndarray) -> np.ndarray:
+        """Run the pretrained network and return its raw soft grayscale output.
 
-        See Also
-        --------
-        ConversionEngine.convert : Full parameter and return-value contract.
+        Exposed separately from :meth:`convert` so other code (e.g.
+        :class:`~coloring_page.engines.gated.GatedEngine`, which uses this
+        network's confidence as a semantic filter rather than a
+        line-art source in its own right) can get the raw signal without
+        going through :func:`~coloring_page.postprocess.soft_map_to_line_art`.
+
+        Parameters
+        ----------
+        image : np.ndarray
+            BGR image, shape ``(H, W, 3)``, dtype ``uint8``.
+
+        Returns
+        -------
+        np.ndarray
+            Single-channel ``uint8`` image, same ``(H, W)`` as ``image``,
+            lower values = more ink-like (project convention).
         """
         model = self._get_model()
         original_height, original_width = image.shape[:2]
@@ -200,9 +211,21 @@ class InformativeDrawingsEngine(ConversionEngine):
         # inversion needed, just rescaling to uint8.
         sketch = output.squeeze().clamp(0, 1).cpu().numpy()
         sketch = (sketch * 255).astype(np.uint8)
-        sketch = cv2.resize(
+        upscaled: np.ndarray = cv2.resize(
             sketch, (original_width, original_height), interpolation=cv2.INTER_CUBIC
         )
+        return upscaled
+
+    def convert(
+        self, image: np.ndarray, *, line_thickness: int = 1, debug: DebugSink | None = None
+    ) -> np.ndarray:
+        """Run the pretrained network and render its output as line art.
+
+        See Also
+        --------
+        ConversionEngine.convert : Full parameter and return-value contract.
+        """
+        sketch = self.soft_map(image)
         if debug is not None:
             debug.save("raw_sketch", sketch)
 

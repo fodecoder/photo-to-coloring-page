@@ -43,10 +43,12 @@ REFERENCE_PAIRS = {
 
 #: Styles compared by default. Excludes ``adaptive``: measured boundary F1
 #: (~0.31-0.32) is barely above a fully-inked degenerate baseline (~0.27),
-#: with ink coverage several times the target -- it stays registered and
-#: selectable via ``--styles adaptive`` for experimentation, just not part
-#: of the default comparison.
-RECOMMENDED_STYLES = sorted(ENGINES.keys() - {"adaptive"})
+#: with ink coverage several times the target. Excludes ``gated``: measured
+#: boundary F1 does not currently beat plain ``chained`` at any non-trivial
+#: gate threshold (see ``engines/gated.py``'s docstring). Both stay
+#: registered and selectable via ``--styles`` for experimentation, just not
+#: part of the default comparison.
+RECOMMENDED_STYLES = sorted(ENGINES.keys() - {"adaptive", "gated"})
 
 
 def _iter_input_images(input_dir: Path) -> list[Path]:
