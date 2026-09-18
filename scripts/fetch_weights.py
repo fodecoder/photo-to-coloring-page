@@ -39,6 +39,19 @@ _REPO_ID = "lllyasviel/Annotators"
 #: automatically without also setting the env var.
 _DEFAULT_DEST = Path.home() / ".cache" / "coloring_page" / "informative_drawings.pth"
 
+#: SHA256 of each checkpoint on the lllyasviel/Annotators mirror, pinned
+#: after comparing both with scripts/compare.py (see docs/DIAGNOSIS.md's
+#: Phase 3 and the commit that added this): sk_model.pth ("fine" detail)
+#: measured a higher f1_normalized on 2 of the 3 reference pairs and is
+#: this project's chosen default; sk_model2.pth ("coarse") is kept
+#: fetchable and pinned too, for anyone who wants to compare again on
+#: their own images. A filename not in this dict has no expected hash to
+#: check against -- fetch_weights() falls back to printing it instead.
+_PINNED_SHA256 = {
+    "sk_model.pth": "c686ced2a666b4850b4bb6ccf0748031c3eda9f822de73a34b8979970d90f0c6",
+    "sk_model2.pth": "30a534781061f34e83bb9406b4335da4ff2616c95d22a585c1245aa8363e74e0",
+}
+
 
 def _sha256(path: Path) -> str:
     """Compute a file's SHA256 hex digest, reading it in fixed-size chunks."""
@@ -67,8 +80,10 @@ def fetch_weights(
     expected_sha256 : str | None, optional
         If given, the download is verified against this hash and a
         ``ValueError`` is raised on mismatch. If omitted (the default),
-        no value is assumed or fabricated -- the computed hash is printed
-        instead, so it can be pinned once confirmed.
+        falls back to ``_PINNED_SHA256[filename]`` for a known checkpoint;
+        for an unrecognized filename, no value is assumed or fabricated --
+        the computed hash is printed instead, so it can be pinned once
+        confirmed.
 
     Returns
     -------
@@ -79,6 +94,9 @@ def fetch_weights(
 
     downloaded_path = Path(hf_hub_download(repo_id=_REPO_ID, filename=filename))
     digest = _sha256(downloaded_path)
+
+    if expected_sha256 is None:
+        expected_sha256 = _PINNED_SHA256.get(filename)
 
     if expected_sha256 is not None:
         if digest != expected_sha256:

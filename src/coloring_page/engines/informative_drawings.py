@@ -111,10 +111,14 @@ def _resize_short_side(image: np.ndarray, resolution: int, *, multiple: int = 64
 _WEIGHTS_HELP = (
     "Informative Drawings pretrained weights not found at {path}.\n"
     "This engine requires weights that this project does not bundle:\n"
-    "  Recommended: run 'python scripts/fetch_weights.py' (requires the "
-    "'ml' extra's huggingface_hub dependency). Downloads from the "
-    "lllyasviel/Annotators Hugging Face mirror -- see "
-    "THIRD_PARTY_LICENSES.md for the license caveat this accepts.\n"
+    "  Recommended: run 'python scripts/fetch_weights.py --filename "
+    f"sk_model.pth --dest {_LOCAL_WEIGHTS_PATH}' (requires the 'ml' "
+    'extra\'s huggingface_hub dependency). Downloads the "fine" detail '
+    "checkpoint from the lllyasviel/Annotators Hugging Face mirror -- "
+    'measured to score higher than the "coarse" alternative '
+    "(sk_model2.pth) on 2 of this project's 3 reference images, see the "
+    "commit that pinned this choice. See THIRD_PARTY_LICENSES.md for the "
+    "license caveat this accepts.\n"
     "  Alternative (official source, manual): download 'model.zip' from "
     "the official Google Drive link in the Informative Drawings README "
     "(https://github.com/carolineec/informative-drawings#testing), unzip "
