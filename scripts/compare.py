@@ -26,7 +26,12 @@ import cv2
 import numpy as np
 
 from coloring_page.engines.registry import ENGINES, get_engine
-from coloring_page.metrics import compare_boundaries, compute_metrics
+from coloring_page.metrics import (
+    BoundaryMetrics,
+    compare_boundaries,
+    compute_metrics,
+    degenerate_floor,
+)
 from coloring_page.pipeline import SUPPORTED_INPUT_SUFFIXES, convert_image, load_image
 
 #: Height, in pixels, of the label strip drawn above each contact-sheet tile.
@@ -101,7 +106,7 @@ def _aspect_ratio(shape: tuple[int, ...]) -> float:
 
 def _reference_boundary_scores(
     image_name: str, result: np.ndarray, ref_dir: Path, aspect_tolerance: float
-) -> tuple[float, float, float] | None:
+) -> BoundaryMetrics | None:
     """Score ``result`` against its reference drawing, if one is known and available.
 
     Returns ``None`` (with a stderr note) when ``image_name`` has no known
@@ -203,11 +208,26 @@ def compare(
     output_dir.mkdir(parents=True, exist_ok=True)
     image_paths = _iter_input_images(input_dir)
 
+    if ref_dir is not None:
+        for ref_name in REFERENCE_PAIRS.values():
+            gt = cv2.imread(str(ref_dir / ref_name), cv2.IMREAD_GRAYSCALE)
+            if gt is None:
+                continue
+            long_side = max(gt.shape)
+            tolerance = max(2, round(0.005 * long_side))
+            floor = degenerate_floor(gt, tolerance=tolerance)
+            print(
+                f"Degenerate floor for {ref_name} (tolerance={tolerance}px): {floor:.4f} "
+                "-- any f1_normalized is relative to this, not to zero.",
+                file=sys.stderr,
+            )
+
     with (output_dir / "metrics.csv").open("w", newline="", encoding="utf-8") as csv_file:
         writer = csv.writer(csv_file)
         writer.writerow(
             ["image", "style", "ink_coverage", "component_count", "median_stroke_length",
-             "noise_fraction", "ref_precision", "ref_recall", "ref_f1"]
+             "noise_fraction", "ref_precision", "ref_recall", "ref_f1", "ref_f1_normalized",
+             "ink_admissible"]
         )  # fmt: skip
 
         for image_path in image_paths:
@@ -227,9 +247,15 @@ def compare(
                     else None
                 )
                 ref_row = (
-                    [f"{value:.4f}" for value in ref_scores]
+                    [
+                        f"{ref_scores.precision:.4f}",
+                        f"{ref_scores.recall:.4f}",
+                        f"{ref_scores.f1:.4f}",
+                        f"{ref_scores.f1_normalized:.4f}",
+                        str(ref_scores.ink_admissible),
+                    ]
                     if ref_scores is not None
-                    else ["", "", ""]
+                    else ["", "", "", "", ""]
                 )
 
                 writer.writerow(

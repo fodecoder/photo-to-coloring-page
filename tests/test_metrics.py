@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
 import pytest
 
@@ -12,6 +13,7 @@ from coloring_page.metrics import (
     compare_boundaries,
     component_count,
     compute_metrics,
+    degenerate_floor,
     ink_coverage,
     median_stroke_length,
     noise_fraction,
@@ -98,8 +100,9 @@ def _make_boundary_gt() -> np.ndarray:
 
 def test_boundary_f_measure_exact_match_is_perfect() -> None:
     gt = _make_boundary_gt()
-    precision, recall, f1 = boundary_f_measure(gt, gt, tolerance=0)
-    assert (precision, recall, f1) == (1.0, 1.0, 1.0)
+    result = boundary_f_measure(gt, gt, tolerance=0)
+    assert (result.precision, result.recall, result.f1) == (1.0, 1.0, 1.0)
+    assert result.f1_normalized == pytest.approx(1.0)
 
 
 def test_boundary_f_measure_within_tolerance_still_matches() -> None:
@@ -107,8 +110,8 @@ def test_boundary_f_measure_within_tolerance_still_matches() -> None:
     pred = np.full((30, 30), 255, dtype=np.uint8)
     pred[15, 16] = 0  # 1px away from the single gt ink pixel
 
-    precision, recall, f1 = boundary_f_measure(pred, gt, tolerance=2)
-    assert (precision, recall, f1) == (1.0, 1.0, 1.0)
+    result = boundary_f_measure(pred, gt, tolerance=2)
+    assert (result.precision, result.recall, result.f1) == (1.0, 1.0, 1.0)
 
 
 def test_boundary_f_measure_outside_tolerance_scores_zero() -> None:
@@ -116,13 +119,16 @@ def test_boundary_f_measure_outside_tolerance_scores_zero() -> None:
     pred = np.full((30, 30), 255, dtype=np.uint8)
     pred[15, 16] = 0  # 1px away
 
-    precision, recall, f1 = boundary_f_measure(pred, gt, tolerance=0)
-    assert (precision, recall, f1) == (0.0, 0.0, 0.0)
+    result = boundary_f_measure(pred, gt, tolerance=0)
+    assert (result.precision, result.recall, result.f1) == (0.0, 0.0, 0.0)
 
 
 def test_boundary_f_measure_on_two_blank_images_is_zero() -> None:
     blank = np.full((10, 10), 255, dtype=np.uint8)
-    assert boundary_f_measure(blank, blank) == (0.0, 0.0, 0.0)
+    result = boundary_f_measure(blank, blank)
+    assert (result.precision, result.recall, result.f1) == (0.0, 0.0, 0.0)
+    assert result.f1_normalized == 0.0
+    assert result.ink_admissible is False
 
 
 def test_compare_boundaries_resizes_before_matching() -> None:
@@ -134,10 +140,20 @@ def test_compare_boundaries_resizes_before_matching() -> None:
     pred = np.full((30, 30), 255, dtype=np.uint8)
     pred[14:16, :] = 0
 
-    precision, recall, f1 = compare_boundaries(pred, gt, long_side=60, tolerance=2)
-    assert precision > 0.9
-    assert recall > 0.9
-    assert f1 > 0.9
+    result = compare_boundaries(pred, gt, long_side=60, tolerance=2)
+    assert result.precision > 0.9
+    assert result.recall > 0.9
+    assert result.f1 > 0.9
+
+
+def test_compare_boundaries_default_tolerance_is_relative_to_long_side() -> None:
+    gt = np.full((60, 60), 255, dtype=np.uint8)
+    gt[28:32, :] = 0
+    pred = gt.copy()
+
+    result = compare_boundaries(pred, gt, long_side=60)
+    assert result.precision == pytest.approx(1.0)
+    assert result.recall == pytest.approx(1.0)
 
 
 def test_boundary_f_measure_degenerate_baselines_lose_to_a_real_engine() -> None:
@@ -146,17 +162,93 @@ def test_boundary_f_measure_degenerate_baselines_lose_to_a_real_engine() -> None
     gt = CannyEngine().convert(photo, line_thickness=1)
     pred = ChainedEngine().convert(photo, line_thickness=1)
 
-    _, _, engine_f1 = boundary_f_measure(pred, gt, tolerance=2)
+    engine_f1 = boundary_f_measure(pred, gt, tolerance=2).f1
 
     all_ink = np.zeros_like(gt)
-    _, _, black_f1 = boundary_f_measure(all_ink, gt, tolerance=2)
+    black_f1 = boundary_f_measure(all_ink, gt, tolerance=2).f1
 
     grid = np.full_like(gt, 255)
     grid[::8, :] = 0
     grid[:, ::8] = 0
-    _, _, grid_f1 = boundary_f_measure(grid, gt, tolerance=2)
+    grid_f1 = boundary_f_measure(grid, gt, tolerance=2).f1
 
     assert engine_f1 > black_f1 + 0.15
     assert engine_f1 > grid_f1 + 0.15
     assert black_f1 < 0.5
     assert grid_f1 < 0.5
+
+
+def _make_large_reference(long_side: int = 864) -> np.ndarray:
+    """A line-art-like reference at a realistic working scale.
+
+    The 64x48 ``make_synthetic_photo`` fixture is far too small for
+    pixel-scale calibration checks: a 3px shift is a huge fraction of a
+    64px-wide image but a small one at the 864px long side the project's
+    reference images actually use (matching ``docs/DIAGNOSIS.md``'s
+    calibration table). This draws a handful of thick strokes -- closer to
+    a real line drawing than a single dot -- on a canvas at that scale.
+    """
+    height, width = long_side * 3 // 4, long_side
+    gt = np.full((height, width), 255, dtype=np.uint8)
+    cv2.rectangle(gt, (width // 6, height // 6), (width // 2, height // 2), 0, thickness=3)
+    cv2.circle(gt, (width * 3 // 4, height * 3 // 4), long_side // 8, 0, thickness=3)
+    cv2.line(gt, (width // 10, height * 9 // 10), (width * 9 // 10, height * 9 // 10), 0, 3)
+    return gt
+
+
+def test_degenerate_baselines_stay_near_the_floor() -> None:
+    """The metric this project uses must not reward information-free predictions.
+
+    Per ``docs/DIAGNOSIS.md`` §0, these baselines (all-black page, regular
+    grid, uniform noise) should score close to :func:`degenerate_floor`,
+    not far above it -- confirming the floor is actually a floor, not just
+    one arbitrary degenerate case among many that could score higher.
+    """
+    gt = _make_large_reference()
+    tolerance = 4
+    floor = degenerate_floor(gt, tolerance=tolerance)
+    assert floor > 0.0  # sanity: the floor itself is non-trivial, not zero
+
+    all_ink = np.zeros_like(gt)
+    black = boundary_f_measure(all_ink, gt, tolerance=tolerance)
+
+    rng = np.random.default_rng(0)
+    noise = np.where(rng.random(gt.shape) < 0.04, 0, 255).astype(np.uint8)
+    noisy = boundary_f_measure(noise, gt, tolerance=tolerance)
+
+    grid = np.full_like(gt, 255)
+    grid[::8, :] = 0
+    grid[:, ::8] = 0
+    gridded = boundary_f_measure(grid, gt, tolerance=tolerance)
+
+    assert black.f1 <= floor + 0.05
+    assert noisy.f1 <= floor + 0.05
+    assert gridded.f1 <= floor + 0.05
+
+
+def test_translated_reference_scores_well_above_the_floor() -> None:
+    """A drawing translated by 3px is a stylistic/alignment difference, not noise.
+
+    The pre-fix metric scored this *below* the plain `canny` engine at a
+    fixed 2px tolerance -- exactly the bug this phase fixes (see
+    ``docs/DIAGNOSIS.md`` §0's calibration table: 0.502 vs 0.614). At the
+    relative tolerance derived from the image's own long side, it must
+    score well above the degenerate floor instead.
+    """
+    gt = _make_large_reference()
+
+    translated = np.full_like(gt, 255)
+    translated[:, 3:] = gt[:, :-3]
+
+    result = compare_boundaries(translated, gt, long_side=max(gt.shape))
+    assert result.f1_normalized > 0.80
+
+
+def test_dilated_reference_is_not_ink_admissible() -> None:
+    gt = CannyEngine().convert(make_synthetic_photo(), line_thickness=1)
+    ink_mask = (gt < 160).astype(np.uint8)
+    dilated_mask = cv2.dilate(ink_mask, np.ones((3, 3), np.uint8))
+    dilated = np.where(dilated_mask > 0, 0, 255).astype(np.uint8)
+
+    result = boundary_f_measure(dilated, gt, tolerance=2)
+    assert result.ink_admissible is False

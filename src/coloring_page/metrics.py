@@ -28,8 +28,11 @@ def ink_coverage(binary_image: np.ndarray) -> float:
     Returns
     -------
     float
-        Ink pixel fraction in ``[0, 1]``. The project's target range for
-        a finished coloring page is roughly 5-8%.
+        Ink pixel fraction in ``[0, 1]``. The project's admissibility band
+        for a finished coloring page is 3-7% (see
+        :func:`boundary_f_measure`'s ``ink_admissible`` field), measured
+        against ``docs/desired.jpg`` (3.8% at threshold <160, 2.2% at
+        <128 -- this function's own threshold).
     """
     return float(np.mean(binary_image < 128))
 
@@ -130,9 +133,94 @@ def noise_fraction(
     return noise_pixels / total_ink
 
 
-def boundary_f_measure(
-    pred: np.ndarray, gt: np.ndarray, *, tolerance: int = 2
+#: Ink-coverage band a prediction must fall within to be considered a
+#: usable coloring page at all, independent of how well its strokes are
+#: placed. Measured against ``docs/desired.jpg`` (3.8% at threshold <160,
+#: 2.2% at <128); this is deliberately a separate admissibility gate, not
+#: blended into F1, because an out-of-band result (e.g. a solid-black page,
+#: or an engine that draws every gradient it sees) can still score well on
+#: placement while being unusable as a coloring page.
+_MIN_ADMISSIBLE_INK = 0.03
+_MAX_ADMISSIBLE_INK = 0.07
+
+
+@dataclass
+class BoundaryMetrics:
+    """Boundary-matching result of a prediction against a reference drawing."""
+
+    precision: float
+    recall: float
+    f1: float
+    f1_normalized: float
+    ink_admissible: bool
+
+
+def _thin_ink(ink_mask: np.ndarray) -> np.ndarray:
+    """Skeletonize a 0/1 ink mask to 1px-wide strokes.
+
+    Two drawings of the same content can differ only in how thick their
+    strokes are rendered -- that's a rendering choice, not a difference in
+    what was drawn. Without this, a boundary match effectively also scores
+    stroke width, which is exactly the loophole that let a stroke-doubling
+    postprocessing bug (see ``postprocess.gradient_edges``) look like an
+    improvement: doubling every stroke's width raised recall for free.
+    ``cv2.ximgproc.thinning`` needs a non-empty 0/255 mask, so an all-blank
+    mask short-circuits rather than being passed through.
+    """
+    if not ink_mask.any():
+        return ink_mask
+    thinned = cv2.ximgproc.thinning((ink_mask * 255).astype(np.uint8))
+    return (thinned > 0).astype(np.uint8)
+
+
+def _boundary_prf(
+    pred_ink: np.ndarray, gt_ink: np.ndarray, *, tolerance: int
 ) -> tuple[float, float, float]:
+    """Precision/recall/F1 between two already-thinned 0/1 ink masks."""
+    dist_to_gt = cv2.distanceTransform(1 - gt_ink, cv2.DIST_L2, 5)
+    dist_to_pred = cv2.distanceTransform(1 - pred_ink, cv2.DIST_L2, 5)
+
+    precision = float((dist_to_gt[pred_ink > 0] <= tolerance).mean()) if pred_ink.any() else 0.0
+    recall = float((dist_to_pred[gt_ink > 0] <= tolerance).mean()) if gt_ink.any() else 0.0
+    f1 = 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
+    return precision, recall, f1
+
+
+def degenerate_floor(gt: np.ndarray, *, tolerance: int) -> float:
+    """F1 that an information-free prediction gets against ``gt``, for free.
+
+    A prediction that is ink everywhere has recall 1.0 by construction --
+    every reference ink pixel trivially has a predicted ink pixel within
+    any tolerance -- so its F1 is not zero. On ``docs/desired.jpg`` this
+    floor was measured at 0.41 at a 4px tolerance, using the same 0/1
+    thinning as :func:`boundary_f_measure`; the exact value depends on
+    ``gt`` and ``tolerance`` and should be re-measured rather than assumed.
+    Any real prediction's score is only meaningful relative to this floor,
+    not relative to zero -- see :func:`boundary_f_measure`'s
+    ``f1_normalized``.
+
+    Parameters
+    ----------
+    gt : np.ndarray
+        Reference image, single-channel, dtype ``uint8``, ``255``
+        background.
+    tolerance : int
+        Matching radius in pixels, at the same scale as ``gt``.
+
+    Returns
+    -------
+    float
+        The F1 an all-ink prediction scores against ``gt``.
+    """
+    gt_ink = _thin_ink((gt < 160).astype(np.uint8))
+    if not gt_ink.any():
+        return 0.0
+    all_ink = _thin_ink(np.ones_like(gt_ink))
+    _, _, f1 = _boundary_prf(all_ink, gt_ink, tolerance=tolerance)
+    return f1
+
+
+def boundary_f_measure(pred: np.ndarray, gt: np.ndarray, *, tolerance: int = 2) -> BoundaryMetrics:
     """Precision/recall/F1 of predicted strokes against a reference drawing.
 
     Pixel-wise equality is meaningless for line art: two drawings of the
@@ -140,7 +228,9 @@ def boundary_f_measure(
     (the BSDS500 boundary benchmark) is to count a predicted ink pixel as
     correct when a reference ink pixel lies within ``tolerance``, and vice
     versa for recall. A distance transform gives this without the full
-    bipartite matching of the original benchmark.
+    bipartite matching of the original benchmark. Both masks are
+    skeletonized to 1px first (see :func:`_thin_ink`) so stroke thickness
+    doesn't itself inflate the match.
 
     ``pred`` and ``gt`` must already be at the same scale: ``tolerance`` is
     a pixel count, so it only means the same thing on both images if they
@@ -163,25 +253,44 @@ def boundary_f_measure(
 
     Returns
     -------
-    tuple[float, float, float]
-        ``(precision, recall, f1)``, each in ``[0, 1]``.
+    BoundaryMetrics
+        ``precision``/``recall``/``f1`` are the raw boundary match.
+        ``f1_normalized`` rescales ``f1`` against :func:`degenerate_floor`
+        so a score is readable relative to the best an information-free
+        prediction can do, not relative to zero. ``ink_admissible``
+        reports whether ``pred``'s own ink coverage (before thinning, since
+        this is about how the page would actually print) falls in the
+        3-7% band a usable coloring page needs -- kept separate from
+        ``f1``/``f1_normalized`` rather than blended in, since a
+        wrong-band result and a badly-placed result are different failures.
     """
-    pred_ink = (pred < 160).astype(np.uint8)
-    gt_ink = (gt < 160).astype(np.uint8)
+    pred_ink_raw = (pred < 160).astype(np.uint8)
+    gt_ink_raw = (gt < 160).astype(np.uint8)
 
-    dist_to_gt = cv2.distanceTransform(1 - gt_ink, cv2.DIST_L2, 5)
-    dist_to_pred = cv2.distanceTransform(1 - pred_ink, cv2.DIST_L2, 5)
+    pred_ink = _thin_ink(pred_ink_raw)
+    gt_ink = _thin_ink(gt_ink_raw)
 
-    precision = float((dist_to_gt[pred_ink > 0] <= tolerance).mean()) if pred_ink.any() else 0.0
-    recall = float((dist_to_pred[gt_ink > 0] <= tolerance).mean()) if gt_ink.any() else 0.0
-    f1 = 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
-    return precision, recall, f1
+    precision, recall, f1 = _boundary_prf(pred_ink, gt_ink, tolerance=tolerance)
+
+    floor = degenerate_floor(gt, tolerance=tolerance)
+    f1_normalized = 0.0 if floor >= 1.0 else max(0.0, min(1.0, (f1 - floor) / (1 - floor)))
+
+    ink = float(np.mean(pred_ink_raw))
+    ink_admissible = _MIN_ADMISSIBLE_INK <= ink <= _MAX_ADMISSIBLE_INK
+
+    return BoundaryMetrics(
+        precision=precision,
+        recall=recall,
+        f1=f1,
+        f1_normalized=f1_normalized,
+        ink_admissible=ink_admissible,
+    )
 
 
 def compare_boundaries(
-    pred: np.ndarray, gt: np.ndarray, *, long_side: int = 864, tolerance: int = 2
-) -> tuple[float, float, float]:
-    """Boundary precision/recall/F1 between two images of possibly different sizes.
+    pred: np.ndarray, gt: np.ndarray, *, long_side: int = 864, tolerance: int | None = None
+) -> BoundaryMetrics:
+    """Boundary match between two images of possibly different sizes.
 
     Resizes ``pred`` so its long side is ``long_side`` (preserving its own
     aspect ratio), then resizes ``gt`` to that exact resulting shape,
@@ -206,13 +315,21 @@ def compare_boundaries(
         Target size, in pixels, for ``pred``'s longer dimension after
         resizing, by default 864 (the reference images' own long side, so
         an exact-aspect pair needs no resizing at all).
-    tolerance : int, optional
-        Matching radius in pixels at the normalized scale, by default 2.
+    tolerance : int | None, optional
+        Matching radius in pixels at the normalized scale, by default
+        None, which derives a tolerance relative to ``long_side``
+        (``max(2, round(0.005 * long_side))``, 4px at the default 864).
+        A fixed absolute tolerance conflates two different questions --
+        "is this the right drawing" and "is it aligned to the pixel" --
+        and the calibration in ``docs/DIAGNOSIS.md`` §0 shows a fixed 2px
+        tolerance answers only the second one. Pass an explicit value to
+        override, e.g. for tests that need a specific tolerance regardless
+        of ``long_side``.
 
     Returns
     -------
-    tuple[float, float, float]
-        ``(precision, recall, f1)``, each in ``[0, 1]``.
+    BoundaryMetrics
+        See :func:`boundary_f_measure`.
     """
     pred_height, pred_width = pred.shape[:2]
     scale = long_side / max(pred_height, pred_width)
@@ -220,6 +337,9 @@ def compare_boundaries(
 
     resized_pred = cv2.resize(pred, target_size, interpolation=cv2.INTER_AREA)
     resized_gt = cv2.resize(gt, target_size, interpolation=cv2.INTER_AREA)
+
+    if tolerance is None:
+        tolerance = max(2, round(0.005 * long_side))
 
     return boundary_f_measure(resized_pred, resized_gt, tolerance=tolerance)
 
