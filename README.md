@@ -223,18 +223,34 @@ when adding a further new engine.
 
 ### Future ML engine candidates
 
-Evaluated but not implemented in this round, in priority order -- each
-would need its own license check before merging:
-
 1. **PidiNet** / **TEED** — lightweight CNN edge detectors (available via
    `controlnet_aux`), faster than a full generator and closer to a
-   "hand-drawn" line than Canny.
-2. **Sketch Simplification** (Simo-Serra et al., SIGGRAPH 2016/2018) —
-   not an extractor but a second stage: takes rough, noisy line art and
-   produces clean, uniform strokes. Worth trying *in cascade* after
-   `chained`/`skeleton` rather than as a standalone style.
-3. **AniLines** (`zhenglinpan/AniLines-Anime-Lineart-Extractor`) — more
-   recent; license and weight size not yet verified.
+   "hand-drawn" line than Canny. Not yet evaluated.
+2. **Sketch Simplification** (`bobbens/sketch_simplification`, Simo-Serra
+   et al., SIGGRAPH 2016/2018) — evaluated and **rejected**: its license
+   is "freely available for free non-commercial use... only," i.e.
+   non-commercial-only, unlike every other model this project uses
+   (all MIT). Disqualified outright by this project's own license-check
+   standard (`add-conversion-style` skill checklist requires confirming
+   commercial/redistribution use is permitted), independent of how well
+   it would have performed.
+3. **AniLines** (`zhenglinpan/AniLines-Anime-Lineart-Extractor`) —
+   evaluated and **not adopted**: the *code* is MIT-licensed, but (a) its
+   weights' own license/hosting terms weren't separately verified (the
+   same category of gap that sank the `sketch_simplification` idea's
+   sibling, and that this project treats as disqualifying until
+   confirmed — see `THIRD_PARTY_LICENSES.md`), and (b) it's trained on
+   anime cel imagery, the same category as `anime2sketch` — not a
+   cleanup cascade over another engine's output the way
+   `sketch_simplification` would have been, so it doesn't address the
+   gap either idea was meant to close. That gap, measured in this
+   project's own comparisons (`gated`'s docstring, `postprocess.py`'s
+   commit history), is a *semantic-selection* problem -- classical and
+   ML engines alike react to photographic texture (water, foliage) the
+   reference illustrations omit entirely -- not a stroke-cleanliness
+   problem a simplification/cleanup pass would fix. A cascade stage is
+   only worth revisiting if a future engine's *precision* problem is
+   traced to noisy geometry rather than semantic misselection.
 
 ## Running the test suite
 
