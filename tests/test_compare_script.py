@@ -48,6 +48,7 @@ def test_compare_writes_contact_sheets_and_metrics_csv(tmp_path: Path) -> None:
 def test_recommended_styles_excludes_adaptive_but_still_selectable(tmp_path: Path) -> None:
     assert "adaptive" not in RECOMMENDED_STYLES
     assert "gated" not in RECOMMENDED_STYLES
+    assert "xdog" not in RECOMMENDED_STYLES
 
     input_dir = tmp_path / "photos"
     output_dir = tmp_path / "compare_out"

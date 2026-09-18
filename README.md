@@ -72,25 +72,43 @@ Run `coloring-page --help` for the full flag reference.
 ## Conversion styles
 
 Coloring-page-appropriate styles (uniform stroke, closed contours, low
-noise): `canny`, `xdog`, `chained`, and `skeleton`. `cartoon` is usable
-for painterly sources but tends to run noisier than the four above.
-`adaptive` is kept as an optional textured-sketch style but is **not**
-recommended for producing a coloring page (see below).
+noise): `canny`, `chained`, `skeleton`, and `region`. `cartoon` is usable
+for painterly sources but tends to run noisier than those four. `adaptive`
+and `xdog` are kept as optional styles but are **not** recommended for
+producing a coloring page (see below).
 
-- **`canny`** (default) — OpenCV's Canny edge detector, with thresholds
-  derived from the image's own gradient-magnitude distribution, on a
-  lightly blurred image. Gives crisp, thin outlines on high-contrast
-  photos (objects, faces, buildings); may miss soft or low-contrast edges.
-- **`xdog`** — an eXtended Difference-of-Gaussians filter: subtracts two
-  differently-blurred copies of the image and sharpens the result with a
-  tanh-based threshold. Tends to produce more consistent, artistic-looking
-  outlines and handles gradual shading transitions gracefully.
-- **`chained`** — flattens small-scale texture with a rolling guidance
-  filter, detects *connected edge chains* (not a pixel mask) with
+Measured with `scripts/compare.py` against this project's 3 reference
+images (boundary F1, normalized against a degenerate-baseline floor, and
+whether ink coverage lands in the 3-7% band a printable coloring page
+needs): `chained` is the only zero-dependency style that lands in that
+ink band on all 3 references, at a boundary F1 on par with the best of
+the others (`canny` matches or slightly beats it on raw F1 but is outside
+the ink band on 2 of 3). That's why `chained` is the default, not `canny`
+as earlier versions of this project used — see `cli.py`'s `--style` help
+and `engines/region.py`'s docstring (which was originally hypothesized to
+win this comparison and didn't) for the numbers.
+
+- **`chained`** (default) — flattens small-scale texture with a rolling
+  guidance filter, detects *connected edge chains* (not a pixel mask) with
   `cv2.ximgproc.createEdgeDrawing`, then redraws each chain's smoothed
   geometry at a uniform stroke width. Solves broken/jittery contours at
-  the source rather than patching a mask afterwards; a good default
-  candidate for painterly or illustrated sources.
+  the source rather than patching a mask afterwards.
+- **`canny`** — OpenCV's Canny edge detector, with thresholds derived
+  from the image's own gradient-magnitude distribution, on a lightly
+  blurred image. Gives crisp, thin outlines on high-contrast photos
+  (objects, faces, buildings); may miss soft or low-contrast edges, and
+  tends to run over this project's ink-coverage band more often than
+  `chained` on the same sources.
+- **`xdog`** *(not recommended for coloring pages)* — an eXtended
+  Difference-of-Gaussians filter: subtracts two differently-blurred copies
+  of the image and sharpens the result with a tanh-based threshold.
+  Produces more consistent, artistic-looking outlines and handles gradual
+  shading transitions gracefully, but measures far behind every other
+  style here (`f1_normalized` averaging ~0.05 across the 3 reference
+  images) — it draws noticeably less ink than the reference line art, not
+  a leftover bug (the DoG sign error documented in
+  `docs/IMPROVEMENT-PROMPT.md` is already fixed). Kept registered for its
+  distinct artistic look, not as a coloring-page candidate.
 - **`skeleton`** — an alternative route to the same "redraw the geometry"
   idea: L0 gradient minimization flattens texture, Canny finds edges,
   `cv2.ximgproc.thinning` reduces them to a 1px skeleton (with short
@@ -114,7 +132,7 @@ recommended for producing a coloring page (see below).
   `chained` on only 1 of 3 (the other 2 have a known aspect-ratio mismatch
   against their reference — see `scripts/compare.py`'s `REFERENCE_PAIRS`);
   it does have a real ink-admissibility advantage (in this project's 3-7%
-  target band on 2 of 3 images, vs 0 of 3 for `canny`) but does not clear
+  target band on all 3 images, vs 0 of 3 for `canny`) but does not clear
   the bar to replace the gradient-based engines as a default. Kept
   registered as a selectable style, not part of the recommended set; see
   `engines/region.py`'s docstring for the full measurement.

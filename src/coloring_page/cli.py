@@ -53,11 +53,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--style",
         choices=sorted(ENGINES),
-        default="canny",
+        default="chained",
         help=(
-            "Conversion style to use (default: canny). 'adaptive' is a "
-            "textured-sketch style, not recommended for coloring pages -- "
-            "see the README's 'Conversion styles' section."
+            "Conversion style to use (default: chained). Measured with "
+            "scripts/compare.py across this project's reference images: "
+            "chained is admissible (3-7% ink coverage) on all of them, "
+            "unlike every other zero-dependency style, at a boundary F1 "
+            "on par with the best of them. 'adaptive' and 'xdog' are not "
+            "recommended for coloring pages -- see the README's "
+            "'Conversion styles' section."
         ),
     )
     parser.add_argument(

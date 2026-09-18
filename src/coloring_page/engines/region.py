@@ -373,8 +373,10 @@ class RegionEngine(ConversionEngine):
     both on at least 2 of 3 -- it wins on 1 of 3 (the pair without a
     known aspect-ratio mismatch is the one it loses, narrowly, to both).
     It does have a real, measured advantage in ink-admissibility (in the
-    3-7% band on 2 of 3 images here, vs 0 of 3 for ``canny``), which is
-    the property the whole region-boundary approach was meant to
+    3-7% band on all 3 images here, vs 0 of 3 for ``canny`` -- corrected
+    from an earlier miscount of this same data before this docstring
+    settled on ``"gradient"`` as the default), which is the property the
+    whole region-boundary approach was meant to
     improve on -- see ``docs/DIAGNOSIS.md`` #5. Shipped as a selectable
     ``--style`` for that reason, not as a proven replacement for the
     gradient-based engines; Phase 5's default-style decision should

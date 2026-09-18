@@ -46,14 +46,20 @@ REFERENCE_PAIRS = {
     "starting-image-7.jpeg": "desired-7.jpg",
 }
 
-#: Styles compared by default. Excludes ``adaptive``: measured boundary F1
-#: (~0.31-0.32) is barely above a fully-inked degenerate baseline (~0.27),
-#: with ink coverage several times the target. Excludes ``gated``: measured
-#: boundary F1 does not currently beat plain ``chained`` at any non-trivial
-#: gate threshold (see ``engines/gated.py``'s docstring). Both stay
-#: registered and selectable via ``--styles`` for experimentation, just not
-#: part of the default comparison.
-RECOMMENDED_STYLES = sorted(ENGINES.keys() - {"adaptive", "gated"})
+#: Styles compared by default. Excludes ``adaptive``: ink coverage runs
+#: several times this project's 3-7% admissibility band (a texturized
+#: sketch effect, not a coloring-page style -- see the README). Excludes
+#: ``gated``: measured boundary F1 does not currently beat plain
+#: ``chained`` at any non-trivial gate threshold (see ``engines/gated.py``'s
+#: docstring). Excludes ``xdog``: measured ``f1_normalized`` averages
+#: ~0.05 across this project's 3 reference pairs (recall 0.32-0.42 even
+#: though the DoG sign-error bug documented in
+#: ``docs/IMPROVEMENT-PROMPT.md`` is already fixed -- it now just draws
+#: too little ink relative to the reference to be a coloring-page
+#: candidate here, not a leftover bug). All three stay registered and
+#: selectable via ``--styles`` for experimentation, just not part of the
+#: default comparison.
+RECOMMENDED_STYLES = sorted(ENGINES.keys() - {"adaptive", "gated", "xdog"})
 
 
 def _iter_input_images(input_dir: Path) -> list[Path]:
@@ -283,7 +289,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Comma-separated style names to compare (default: RECOMMENDED_STYLES, i.e. all "
-        "registered styles except 'adaptive').",
+        "registered styles except 'adaptive', 'gated', and 'xdog').",
     )
     parser.add_argument(
         "--ref-dir",
