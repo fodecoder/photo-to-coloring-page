@@ -103,6 +103,21 @@ recommended for producing a coloring page (see below).
   gradients at all, so painted/illustrated sources with lots of internal
   texture, shading, or glow effects don't produce stippling noise, but
   it runs noisier than `chained`/`skeleton` on the same kind of source.
+- **`region`** — segments the image into flat color regions (L0 gradient
+  minimization, then mean-shift filtering or SEEDS/SLIC superpixels), then
+  draws only the boundaries between regions whose average colors actually
+  differ, redrawn at a uniform stroke width. A more thorough version of the
+  same idea `cartoon` uses (region segmentation instead of intensity
+  gradients), adding the texture-flattening step, the inter-region-contrast
+  filter, and proper geometry redraw that `cartoon` lacks. **Measured
+  result**: on this project's 3 reference images, it beats both `canny` and
+  `chained` on only 1 of 3 (the other 2 have a known aspect-ratio mismatch
+  against their reference — see `scripts/compare.py`'s `REFERENCE_PAIRS`);
+  it does have a real ink-admissibility advantage (in this project's 3-7%
+  target band on 2 of 3 images, vs 0 of 3 for `canny`) but does not clear
+  the bar to replace the gradient-based engines as a default. Kept
+  registered as a selectable style, not part of the recommended set; see
+  `engines/region.py`'s docstring for the full measurement.
 - **`adaptive`** *(textured sketch, not a coloring-page style)* — median
   blur followed by adaptive (per-neighborhood) thresholding, similar to a
   pencil-sketch effect. Preserves shading as texture rather than clean

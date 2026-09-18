@@ -12,6 +12,7 @@ from coloring_page.engines.base import ConversionEngine
 from coloring_page.engines.canny import CannyEngine
 from coloring_page.engines.cartoon import CartoonEngine
 from coloring_page.engines.chained import ChainedEngine
+from coloring_page.engines.region import RegionEngine
 from coloring_page.engines.skeleton_redraw import SkeletonRedrawEngine
 from coloring_page.engines.xdog import XDoGEngine
 
@@ -22,6 +23,7 @@ ENGINES: dict[str, type[ConversionEngine]] = {
     "cartoon": CartoonEngine,
     "chained": ChainedEngine,
     "skeleton": SkeletonRedrawEngine,
+    "region": RegionEngine,
 }
 
 try:
