@@ -236,17 +236,29 @@ def hysteresis_centerline(
     return prune_short_branches(skeleton, min_branch_length=min_branch_length)
 
 
-def nms_centerline(
+def gradient_edges(
     gray: np.ndarray, *, high_threshold_percentile: float = 90.0, low_threshold_ratio: float = 0.4
 ) -> np.ndarray:
-    """Reduce a soft grayscale map to a centerline mask via Canny-style NMS.
+    """Reduce a soft grayscale map to its gradient-magnitude edges via Canny-style NMS.
 
     Treats ``gray`` as if it were a photo and runs it through the same
     gradient-direction non-maximum suppression plus hysteresis threshold
-    ``cv2.Canny`` uses internally (its stage 2-3): a candidate edge pixel
-    survives only if it's a local maximum of gradient magnitude measured
-    *across* the local edge direction, which thins a wide soft transition
-    down to a single pixel row without an explicit skeletonization pass.
+    ``cv2.Canny`` uses internally (its stage 2-3). This finds *edges*, in
+    the image-processing sense: locations where intensity changes sharply.
+
+    That is not the same thing as a stroke's centerline, and using it as
+    one is a bug this project shipped as its default for a while (see
+    ``docs/DIAGNOSIS.md`` §2): a soft stroke rendered with any width or
+    falloff has *two* edges, one on each side, so this function reports
+    two parallel lines for every real stroke instead of the one line
+    down its middle. Formerly named ``nms_centerline``, which is exactly
+    the misleading name that made shipping it as the centerline-extraction
+    default plausible in the first place. Kept available as a legitimate
+    edge detector -- e.g. for content that genuinely is a gradient
+    transition rather than a hand-drawn stroke -- but
+    :func:`soft_map_to_line_art` no longer defaults to it; use
+    :func:`hysteresis_centerline` to actually collapse a wide soft stroke
+    to its centerline.
 
     Parameters
     ----------
@@ -297,8 +309,18 @@ def redraw_centerline(
     ----------
     centerline : np.ndarray
         Single-channel ``uint8`` image, ``255`` = line pixel, ``0`` =
-        background, as produced by :func:`hysteresis_centerline` or
-        :func:`nms_centerline`.
+        background, already thinned to 1px wide -- as produced by
+        :func:`hysteresis_centerline`, or by :func:`gradient_edges` (whose
+        own internal NMS step already yields 1px-wide edges). On a mask
+        that is *not* pre-thinned, ``cv2.findContours`` traces each
+        region's boundary, which redraws a thick stroke as two parallel
+        lines instead of one -- the same failure mode
+        :func:`gradient_edges` has as a *centerline* source, not a defect
+        in this function, but one this function can't correct for. A
+        debug assertion below catches a mask that is mostly *not*
+        thinned; it tolerates the occasional isolated 2x2 block
+        Zhang-Suen thinning can leave at a junction, which is a cosmetic
+        artifact, not the systemic doubling an un-thinned mask produces.
     polyline_epsilon : float, optional
         ``cv2.approxPolyDP`` tolerance used to smooth each traced
         contour before redrawing, in pixels, by default 1.2.
@@ -311,6 +333,17 @@ def redraw_centerline(
         Single-channel ``uint8`` image, project convention: ``0`` = ink,
         ``255`` = background.
     """
+    mask = (centerline > 0).astype(np.uint8)
+    total_ink = int(mask.sum())
+    if total_ink > 0:
+        solid_blocks = cv2.filter2D(mask, cv2.CV_8U, np.ones((2, 2), np.uint8), anchor=(0, 0))
+        thick_fraction = float(np.count_nonzero(solid_blocks >= 4)) / total_ink
+        assert thick_fraction < 0.1, (
+            f"redraw_centerline expects a mask already thinned to 1px wide; "
+            f"{thick_fraction:.0%} of its ink sits in solid 2x2 blocks, which indicates "
+            "the input wasn't skeletonized first (see hysteresis_centerline)."
+        )
+
     contours, _ = cv2.findContours(centerline, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     canvas = np.full(centerline.shape, 255, dtype=np.uint8)
     for contour in contours:
@@ -378,7 +411,7 @@ def redraw_segments(
 def soft_map_to_line_art(
     soft: np.ndarray,
     *,
-    strategy: Literal["nms", "hysteresis"] = "nms",
+    strategy: Literal["nms", "hysteresis"] = "hysteresis",
     line_thickness: int = 1,
     min_branch_length: int = 15,
     polyline_epsilon: float = 1.2,
@@ -387,7 +420,7 @@ def soft_map_to_line_art(
 
     Top-level entry point combining this module's three stages:
     :func:`normalize_percentile`, a centerline-extraction strategy
-    (:func:`hysteresis_centerline` or :func:`nms_centerline`), and
+    (:func:`hysteresis_centerline` or :func:`gradient_edges`), and
     :func:`redraw_centerline`. This is what every ML engine's
     ``convert()`` should call once it has a soft grayscale map, instead
     of thresholding and keeping the raw mask.
@@ -400,11 +433,16 @@ def soft_map_to_line_art(
         output, resized to the original image's dimensions.
     strategy : {"nms", "hysteresis"}, optional
         Which centerline-extraction strategy to use, by default
-        ``"nms"``. Measured against this project's reference images,
-        ``"nms"`` consistently recovers more true-positive ink than
-        ``"hysteresis"`` (whose explicit skeletonize+prune step loses
-        more real strokes than it removes noise) -- see
-        ``scripts/compare.py`` before changing an engine's default.
+        ``"hysteresis"``. ``"nms"`` (:func:`gradient_edges`) was the
+        default until it was found to double every stroke: it finds a
+        stroke's two edges, not its centerline, so a soft blob of any
+        width redraws as two parallel lines (see ``docs/DIAGNOSIS.md``
+        §2). That doubling was previously read as an improvement because
+        it raises recall against a boundary-matching metric that doesn't
+        penalize excess ink -- see ``metrics.boundary_f_measure``'s
+        ``ink_admissible`` field, added specifically to catch this.
+        ``"nms"`` is kept only for engines/experiments that want raw
+        gradient edges rather than a centerline.
     line_thickness : int, optional
         Output stroke width in pixels, by default 1.
     min_branch_length : int, optional
@@ -424,7 +462,7 @@ def soft_map_to_line_art(
     if strategy == "hysteresis":
         centerline = hysteresis_centerline(normalized, min_branch_length=min_branch_length)
     elif strategy == "nms":
-        centerline = nms_centerline(normalized)
+        centerline = gradient_edges(normalized)
     else:
         raise ValueError(f"Unknown strategy {strategy!r}; expected 'nms' or 'hysteresis'.")
 

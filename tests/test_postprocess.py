@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 
 from coloring_page.postprocess import (
+    gradient_edges,
     hysteresis_centerline,
     hysteresis_threshold,
-    nms_centerline,
     normalize_percentile,
     prune_short_branches,
     redraw_centerline,
@@ -101,13 +101,40 @@ def test_hysteresis_centerline_collapses_wide_blob_to_thin_line() -> None:
     assert 0 < np.count_nonzero(row) <= 3
 
 
-def test_nms_centerline_collapses_wide_blob_to_thin_line() -> None:
+def test_gradient_edges_produces_both_flanks_of_a_wide_stroke() -> None:
+    """gradient_edges finds a stroke's two edges, not its centerline.
+
+    This used to be named ``nms_centerline`` and be the default strategy
+    -- see its docstring and ``docs/DIAGNOSIS.md`` §2. A wide stroke has
+    two edges (one on each side), so this must find both, not collapse
+    to a single line down the middle; that's :func:`hysteresis_centerline`'s
+    job, exercised by the parametrized regression test below.
+    """
     gray = normalize_percentile(_make_wide_blob(width=10))
 
-    centerline = nms_centerline(gray)
+    edges = gradient_edges(gray)
 
-    row = centerline[30, 20:40]
-    assert 0 < np.count_nonzero(row) <= 3
+    row = edges[30, 20:40]
+    assert np.count_nonzero(row) >= 2
+
+
+@pytest.mark.parametrize("width", [2, 6, 12])
+def test_hysteresis_centerline_collapses_a_solid_stroke_to_one_row(width: int) -> None:
+    """A solid stroke of any width must reduce to exactly one centerline row.
+
+    Regression test for the bug that made ``gradient_edges`` (formerly
+    ``nms_centerline``) a bad default: it doubled every stroke into its
+    two edges instead of a single centerline (``docs/DIAGNOSIS.md`` §2,
+    reproduced here at three widths spanning the bug's original repro).
+    """
+    soft = np.full((60, 120), 255, dtype=np.uint8)
+    top = 30 - width // 2
+    soft[top : top + width, 10:110] = 20
+
+    centerline = hysteresis_centerline(normalize_percentile(soft), min_branch_length=3)
+
+    ink_rows = np.nonzero(np.any(centerline[:, 20:100] > 0, axis=1))[0]
+    assert len(ink_rows) == 1
 
 
 def test_redraw_centerline_produces_project_convention_output() -> None:

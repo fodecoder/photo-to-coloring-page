@@ -166,10 +166,24 @@ class Anime2SketchEngine(ConversionEngine):
         postprocess_strategy : {"nms", "hysteresis"}, optional
             Centerline-extraction strategy passed to
             :func:`~coloring_page.postprocess.soft_map_to_line_art` when
-            ``binarize`` is True, by default ``"nms"`` (measured to
-            recover more true-positive ink than ``"hysteresis"`` on this
-            engine's output -- see ``scripts/compare.py``). Ignored
-            when ``binarize`` is False.
+            ``binarize`` is True, by default ``"nms"``
+            (:func:`~coloring_page.postprocess.gradient_edges`). That
+            default is a deliberate, temporary exception to
+            ``soft_map_to_line_art``'s own default of ``"hysteresis"``:
+            ``"nms"`` doubles every stroke into its two edges rather than
+            a true centerline (see that function's docstring), which is a
+            real bug, but this network's soft output is wide/blurry
+            (~12% ink after thresholding), and skeletonizing that down to
+            a proper 1px centerline collapses ink coverage to ~2% --
+            below this project's 3-7% admissibility band -- which
+            crashes recall far more than the doubling bug costs
+            precision. Measured with ``scripts/compare.py``: switching to
+            ``"hysteresis"`` drops this engine's ``f1_normalized`` on all
+            3 reference pairs (e.g. 0.322 -> 0.164 on
+            ``starting-image.jpeg``). Revisit once
+            ``hysteresis_centerline``'s thresholds are retuned for this
+            network's output, or a sharper soft map is available.
+            Ignored when ``binarize`` is False.
         """
         self.weights_path = _resolve_weights_path(weights_path)
         self.load_size = load_size
