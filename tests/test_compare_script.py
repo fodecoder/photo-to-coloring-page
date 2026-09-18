@@ -11,6 +11,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from compare import (  # noqa: E402  (import must follow the sys.path tweak above)
+    RECOMMENDED_STYLES,
     REFERENCE_PAIRS,
     main,
 )
@@ -26,9 +27,7 @@ def test_compare_writes_contact_sheets_and_metrics_csv(tmp_path: Path) -> None:
     for i in range(2):
         Image.fromarray(make_synthetic_photo()).save(input_dir / f"photo_{i}.png")
 
-    exit_code = main(
-        [str(input_dir), str(output_dir), "--styles", "canny,xdog"]
-    )
+    exit_code = main([str(input_dir), str(output_dir), "--styles", "canny,xdog"])
 
     assert exit_code == 0
     assert (output_dir / "photo_0_compare.png").exists()
@@ -44,6 +43,22 @@ def test_compare_writes_contact_sheets_and_metrics_csv(tmp_path: Path) -> None:
     # No reference pair known for these filenames, so the ref_* columns
     # are present but left blank rather than omitted.
     assert all(row["ref_f1"] == "" for row in rows)
+
+
+def test_recommended_styles_excludes_adaptive_but_still_selectable(tmp_path: Path) -> None:
+    assert "adaptive" not in RECOMMENDED_STYLES
+
+    input_dir = tmp_path / "photos"
+    output_dir = tmp_path / "compare_out"
+    input_dir.mkdir()
+    Image.fromarray(make_synthetic_photo()).save(input_dir / "photo.png")
+
+    exit_code = main([str(input_dir), str(output_dir), "--styles", "adaptive"])
+
+    assert exit_code == 0
+    with (output_dir / "metrics.csv").open(encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert {row["style"] for row in rows} == {"adaptive"}
 
 
 def test_compare_empty_directory_returns_error(tmp_path: Path) -> None:

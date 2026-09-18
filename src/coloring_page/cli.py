@@ -117,9 +117,7 @@ def run(args: argparse.Namespace) -> int:
     """
     engine = get_engine(args.style)
     thickness = (
-        args.thickness
-        if args.thickness is not None
-        else default_line_thickness(args.max_dimension)
+        args.thickness if args.thickness is not None else default_line_thickness(args.max_dimension)
     )
 
     if args.input.is_dir():
@@ -129,7 +127,10 @@ def run(args: argparse.Namespace) -> int:
             return 1
 
         for image_path in image_paths:
-            destination = args.output / f"{image_path.stem}_coloring{image_path.suffix}"
+            # Always write PNG regardless of the input's extension: line art
+            # is high-contrast and near-binary, and JPEG's lossy compression
+            # produces visible ringing artifacts around every stroke.
+            destination = args.output / f"{image_path.stem}_coloring.png"
             debug_dir = args.debug_dir / image_path.stem if args.debug_dir is not None else None
             try:
                 image = load_image(image_path)

@@ -57,9 +57,7 @@ def test_thickness_explicit_value_overrides_default(
 
     monkeypatch.setattr(cli, "convert_image", spy_convert_image)
 
-    exit_code = main(
-        [str(synthetic_photo_path), str(tmp_path / "out.png"), "--thickness", "7"]
-    )
+    exit_code = main([str(synthetic_photo_path), str(tmp_path / "out.png"), "--thickness", "7"])
 
     assert exit_code == 0
     assert captured["line_thickness"] == 7
@@ -102,6 +100,31 @@ def test_batch_mode_processes_multiple_files(tmp_path: Path) -> None:
     assert len(outputs) == 3
 
 
+def test_batch_mode_writes_png_regardless_of_input_extension(tmp_path: Path) -> None:
+    input_dir = tmp_path / "photos"
+    output_dir = tmp_path / "out"
+    input_dir.mkdir()
+
+    Image.fromarray(make_synthetic_photo()).save(input_dir / "photo.jpg")
+
+    exit_code = main([str(input_dir), str(output_dir), "--style", "canny"])
+
+    assert exit_code == 0
+    assert (output_dir / "photo_coloring.png").exists()
+    assert not (output_dir / "photo_coloring.jpg").exists()
+
+
+def test_single_file_output_respects_explicit_extension(
+    tmp_path: Path, synthetic_photo_path: Path
+) -> None:
+    output_path = tmp_path / "out.jpg"
+
+    exit_code = main([str(synthetic_photo_path), str(output_path), "--style", "canny"])
+
+    assert exit_code == 0
+    assert output_path.exists()
+
+
 def test_batch_mode_empty_directory_returns_error(tmp_path: Path) -> None:
     input_dir = tmp_path / "empty"
     input_dir.mkdir()
@@ -110,9 +133,7 @@ def test_batch_mode_empty_directory_returns_error(tmp_path: Path) -> None:
     assert exit_code == 1
 
 
-def test_debug_dir_creates_stage_output_files(
-    tmp_path: Path, synthetic_photo_path: Path
-) -> None:
+def test_debug_dir_creates_stage_output_files(tmp_path: Path, synthetic_photo_path: Path) -> None:
     debug_dir = tmp_path / "debug"
 
     exit_code = main(

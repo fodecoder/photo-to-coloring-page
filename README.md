@@ -60,9 +60,12 @@ coloring-page ./photos ./coloring_pages --style canny
 ```
 
 ```
-Converted photos/dog.jpg -> coloring_pages/dog_coloring.jpg
+Converted photos/dog.jpg -> coloring_pages/dog_coloring.png
 Converted photos/cat.png -> coloring_pages/cat_coloring.png
 ```
+
+Batch mode always writes PNG, regardless of the input's format: JPEG's
+lossy compression produces visible ringing artifacts around line art.
 
 Run `coloring-page --help` for the full flag reference.
 

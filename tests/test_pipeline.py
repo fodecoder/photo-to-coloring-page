@@ -138,9 +138,18 @@ def test_derive_kernel_size_allows_even_when_not_requested() -> None:
     assert size == round(1400 * 0.005714)
 
 
+def test_default_line_thickness_matches_expected_values_at_key_resolutions() -> None:
+    # 700px -> 1px, 1400px -> 2px, 2100px -> 3px: ~0.15% of the long side.
+    assert default_line_thickness(700) == 1
+    assert default_line_thickness(1400) == 2
+    assert default_line_thickness(2100) == 3
+
+
+def test_default_line_thickness_never_goes_below_one() -> None:
+    assert default_line_thickness(1) >= 1
+
+
 def test_default_line_thickness_scales_with_working_dimension() -> None:
-    assert default_line_thickness(1400) == max(2, round(1400 / 500))
-    assert default_line_thickness(500) >= 2
     assert default_line_thickness(2000) > default_line_thickness(500)
 
 

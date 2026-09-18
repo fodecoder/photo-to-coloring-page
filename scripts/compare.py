@@ -41,6 +41,13 @@ REFERENCE_PAIRS = {
     "starting-image-7.jpeg": "desired-7.jpg",
 }
 
+#: Styles compared by default. Excludes ``adaptive``: measured boundary F1
+#: (~0.31-0.32) is barely above a fully-inked degenerate baseline (~0.27),
+#: with ink coverage several times the target -- it stays registered and
+#: selectable via ``--styles adaptive`` for experimentation, just not part
+#: of the default comparison.
+RECOMMENDED_STYLES = sorted(ENGINES.keys() - {"adaptive"})
+
 
 def _iter_input_images(input_dir: Path) -> list[Path]:
     """Return the supported image files directly inside ``input_dir``, sorted."""
@@ -247,7 +254,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--styles",
         type=str,
         default=None,
-        help="Comma-separated style names to compare (default: all registered styles).",
+        help="Comma-separated style names to compare (default: RECOMMENDED_STYLES, i.e. all "
+        "registered styles except 'adaptive').",
     )
     parser.add_argument(
         "--ref-dir",
@@ -278,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
         Process exit code: ``0`` on success, ``1`` if no input images were found.
     """
     args = build_parser().parse_args(argv)
-    styles = sorted(ENGINES) if args.styles is None else args.styles.split(",")
+    styles = RECOMMENDED_STYLES if args.styles is None else args.styles.split(",")
 
     image_paths = _iter_input_images(args.input_dir)
     if not image_paths:
