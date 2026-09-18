@@ -130,6 +130,100 @@ def noise_fraction(
     return noise_pixels / total_ink
 
 
+def boundary_f_measure(
+    pred: np.ndarray, gt: np.ndarray, *, tolerance: int = 2
+) -> tuple[float, float, float]:
+    """Precision/recall/F1 of predicted strokes against a reference drawing.
+
+    Pixel-wise equality is meaningless for line art: two drawings of the
+    same scene never place strokes on identical pixels. The standard fix
+    (the BSDS500 boundary benchmark) is to count a predicted ink pixel as
+    correct when a reference ink pixel lies within ``tolerance``, and vice
+    versa for recall. A distance transform gives this without the full
+    bipartite matching of the original benchmark.
+
+    ``pred`` and ``gt`` must already be at the same scale: ``tolerance`` is
+    a pixel count, so it only means the same thing on both images if they
+    share resolution. Use :func:`compare_boundaries` when the two inputs
+    come from images of different sizes.
+
+    Parameters
+    ----------
+    pred : np.ndarray
+        Single-channel image, shape ``(H, W)``, dtype ``uint8``, where
+        ``255`` is background and darker pixels are ink.
+    gt : np.ndarray
+        Reference image, same shape convention as ``pred`` and the same
+        ``(H, W)`` shape.
+    tolerance : int, optional
+        Matching radius in pixels, by default 2. Wider tolerances reward
+        drawing more ink rather than drawing the right ink -- see the
+        degenerate-baseline tests in ``tests/test_metrics.py``, which is
+        why the project default stays tight.
+
+    Returns
+    -------
+    tuple[float, float, float]
+        ``(precision, recall, f1)``, each in ``[0, 1]``.
+    """
+    pred_ink = (pred < 160).astype(np.uint8)
+    gt_ink = (gt < 160).astype(np.uint8)
+
+    dist_to_gt = cv2.distanceTransform(1 - gt_ink, cv2.DIST_L2, 5)
+    dist_to_pred = cv2.distanceTransform(1 - pred_ink, cv2.DIST_L2, 5)
+
+    precision = float((dist_to_gt[pred_ink > 0] <= tolerance).mean()) if pred_ink.any() else 0.0
+    recall = float((dist_to_pred[gt_ink > 0] <= tolerance).mean()) if gt_ink.any() else 0.0
+    f1 = 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
+    return precision, recall, f1
+
+
+def compare_boundaries(
+    pred: np.ndarray, gt: np.ndarray, *, long_side: int = 864, tolerance: int = 2
+) -> tuple[float, float, float]:
+    """Boundary precision/recall/F1 between two images of possibly different sizes.
+
+    Resizes ``pred`` so its long side is ``long_side`` (preserving its own
+    aspect ratio), then resizes ``gt`` to that exact resulting shape,
+    before delegating to :func:`boundary_f_measure`. Normalizing scale
+    first matters because ``tolerance`` is a pixel count: comparing a
+    4000px photo against an 800px reference at the same nominal tolerance
+    would be far stricter on the larger image. ``pred`` and ``gt`` must
+    end up the *same* shape for a pixel-wise distance-transform match, so
+    when the two images' aspect ratios differ (a near-crop reference pair
+    rather than an exact one), ``gt`` is stretched slightly to fit --
+    callers comparing mismatched-aspect pairs should treat the resulting
+    score as approximate (see ``scripts/compare.py``'s aspect-ratio
+    mismatch warning).
+
+    Parameters
+    ----------
+    pred : np.ndarray
+        Single-channel image, shape ``(H, W)``, dtype ``uint8``.
+    gt : np.ndarray
+        Reference image, same single-channel convention as ``pred``.
+    long_side : int, optional
+        Target size, in pixels, for ``pred``'s longer dimension after
+        resizing, by default 864 (the reference images' own long side, so
+        an exact-aspect pair needs no resizing at all).
+    tolerance : int, optional
+        Matching radius in pixels at the normalized scale, by default 2.
+
+    Returns
+    -------
+    tuple[float, float, float]
+        ``(precision, recall, f1)``, each in ``[0, 1]``.
+    """
+    pred_height, pred_width = pred.shape[:2]
+    scale = long_side / max(pred_height, pred_width)
+    target_size = (max(1, round(pred_width * scale)), max(1, round(pred_height * scale)))
+
+    resized_pred = cv2.resize(pred, target_size, interpolation=cv2.INTER_AREA)
+    resized_gt = cv2.resize(gt, target_size, interpolation=cv2.INTER_AREA)
+
+    return boundary_f_measure(resized_pred, resized_gt, tolerance=tolerance)
+
+
 @dataclass
 class LineArtMetrics:
     """Bundle of the quality metrics computed for one line-art output."""

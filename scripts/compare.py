@@ -26,11 +26,20 @@ import cv2
 import numpy as np
 
 from coloring_page.engines.registry import ENGINES, get_engine
-from coloring_page.metrics import compute_metrics
+from coloring_page.metrics import compare_boundaries, compute_metrics
 from coloring_page.pipeline import SUPPORTED_INPUT_SUFFIXES, convert_image, load_image
 
 #: Height, in pixels, of the label strip drawn above each contact-sheet tile.
 _LABEL_HEIGHT = 24
+
+#: Input image filename -> matching reference drawing filename, both resolved
+#: relative to ``--ref-dir``. These are the only pairs with a known
+#: correspondence; not every input image has one.
+REFERENCE_PAIRS = {
+    "starting-image.jpeg": "desired.jpg",
+    "starting-image-5.jpeg": "desired-5.jpg",
+    "starting-image-7.jpeg": "desired-7.jpg",
+}
 
 
 def _iter_input_images(input_dir: Path) -> list[Path]:
@@ -47,7 +56,13 @@ def _label_tile(image: np.ndarray, label: str) -> np.ndarray:
     tile = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
     strip = np.full((_LABEL_HEIGHT, tile.shape[1], 3), 255, dtype=np.uint8)
     cv2.putText(
-        strip, label, (4, _LABEL_HEIGHT - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1,
+        strip,
+        label,
+        (4, _LABEL_HEIGHT - 7),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (0, 0, 0),
+        1,
         cv2.LINE_AA,
     )
     return cv2.vconcat([strip, tile])
@@ -67,6 +82,50 @@ def _convert_with_style(image: np.ndarray, style: str) -> np.ndarray | None:
     except (FileNotFoundError, ValueError, OSError) as exc:
         print(f"Skipping style {style!r}: {exc}", file=sys.stderr)
         return None
+
+
+def _aspect_ratio(shape: tuple[int, ...]) -> float:
+    """Long-side-over-short-side ratio for a ``(H, W, ...)`` shape."""
+    height, width = shape[0], shape[1]
+    return max(height, width) / min(height, width)
+
+
+def _reference_boundary_scores(
+    image_name: str, result: np.ndarray, ref_dir: Path, aspect_tolerance: float
+) -> tuple[float, float, float] | None:
+    """Score ``result`` against its reference drawing, if one is known and available.
+
+    Returns ``None`` (with a stderr note) when ``image_name`` has no known
+    pair or the reference file is missing -- this is a data-availability
+    gap, not a mismatch, so it's silent apart from the note. When a pair
+    *is* found but the two images' aspect ratios differ by more than
+    ``aspect_tolerance``, this still scores it (they're close crops, not a
+    wrong-image mixup) but prints a warning so the resulting F1 is read as
+    approximate rather than exact.
+    """
+    ref_name = REFERENCE_PAIRS.get(image_name)
+    if ref_name is None:
+        return None
+
+    ref_path = ref_dir / ref_name
+    gt = cv2.imread(str(ref_path), cv2.IMREAD_GRAYSCALE)
+    if gt is None:
+        print(
+            f"No reference drawing at {ref_path}; skipping boundary F1 for {image_name}",
+            file=sys.stderr,
+        )
+        return None
+
+    pred_ratio = _aspect_ratio(result.shape)
+    gt_ratio = _aspect_ratio(gt.shape)
+    if abs(pred_ratio - gt_ratio) > aspect_tolerance:
+        print(
+            f"Aspect ratio mismatch for {image_name} vs {ref_name} "
+            f"({pred_ratio:.3f} vs {gt_ratio:.3f}); boundary F1 is approximate.",
+            file=sys.stderr,
+        )
+
+    return compare_boundaries(result, gt)
 
 
 def build_contact_sheet(image: np.ndarray, styles: list[str]) -> np.ndarray:
@@ -104,7 +163,14 @@ def build_contact_sheet(image: np.ndarray, styles: list[str]) -> np.ndarray:
     return cv2.hconcat(padded_tiles)
 
 
-def compare(input_dir: Path, output_dir: Path, styles: list[str]) -> None:
+def compare(
+    input_dir: Path,
+    output_dir: Path,
+    styles: list[str],
+    *,
+    ref_dir: Path | None = None,
+    aspect_tolerance: float = 0.05,
+) -> None:
     """Run ``styles`` over every image in ``input_dir`` and write comparison output.
 
     Parameters
@@ -115,6 +181,15 @@ def compare(input_dir: Path, output_dir: Path, styles: list[str]) -> None:
         Directory to write contact-sheet PNGs and ``metrics.csv`` into.
     styles : list[str]
         Style names (keys of ``ENGINES``) to run and compare.
+    ref_dir : Path | None, optional
+        Directory to look up reference drawings in (see
+        ``REFERENCE_PAIRS``), by default None, which disables boundary F1
+        scoring entirely (images without a known reference always leave
+        those columns blank regardless).
+    aspect_tolerance : float, optional
+        Maximum long/short aspect-ratio difference, between a result and
+        its reference, allowed before printing a mismatch warning, by
+        default 0.05.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     image_paths = _iter_input_images(input_dir)
@@ -123,7 +198,7 @@ def compare(input_dir: Path, output_dir: Path, styles: list[str]) -> None:
         writer = csv.writer(csv_file)
         writer.writerow(
             ["image", "style", "ink_coverage", "component_count", "median_stroke_length",
-             "noise_fraction"]
+             "noise_fraction", "ref_precision", "ref_recall", "ref_f1"]
         )  # fmt: skip
 
         for image_path in image_paths:
@@ -136,6 +211,18 @@ def compare(input_dir: Path, output_dir: Path, styles: list[str]) -> None:
                 if result is None:
                     continue
                 metrics = compute_metrics(result)
+
+                ref_scores = (
+                    _reference_boundary_scores(image_path.name, result, ref_dir, aspect_tolerance)
+                    if ref_dir is not None
+                    else None
+                )
+                ref_row = (
+                    [f"{value:.4f}" for value in ref_scores]
+                    if ref_scores is not None
+                    else ["", "", ""]
+                )
+
                 writer.writerow(
                     [
                         image_path.name,
@@ -144,6 +231,7 @@ def compare(input_dir: Path, output_dir: Path, styles: list[str]) -> None:
                         metrics.component_count,
                         f"{metrics.median_stroke_length:.2f}",
                         f"{metrics.noise_fraction:.4f}",
+                        *ref_row,
                     ]
                 )
 
@@ -160,6 +248,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Comma-separated style names to compare (default: all registered styles).",
+    )
+    parser.add_argument(
+        "--ref-dir",
+        type=Path,
+        default=Path("docs"),
+        help="Directory to look up reference drawings (REFERENCE_PAIRS) in, by default 'docs'.",
+    )
+    parser.add_argument(
+        "--aspect-tolerance",
+        type=float,
+        default=0.05,
+        help="Max long/short aspect-ratio difference before warning of a reference mismatch.",
     )
     return parser
 
@@ -185,7 +285,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"No supported images found in {args.input_dir}", file=sys.stderr)
         return 1
 
-    compare(args.input_dir, args.output_dir, styles)
+    compare(
+        args.input_dir,
+        args.output_dir,
+        styles,
+        ref_dir=args.ref_dir,
+        aspect_tolerance=args.aspect_tolerance,
+    )
     print(f"Compared styles {styles} on {len(image_paths)} image(s) -> {args.output_dir}")
     return 0
 
