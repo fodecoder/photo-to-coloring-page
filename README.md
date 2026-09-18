@@ -143,30 +143,42 @@ the default engine has zero machine-learning dependencies.
 `src/coloring_page/engines/_informative_drawings_arch.py`; **no pretrained
 weights are included**. To use it:
 
-1. Install the `ml` extra: `pip install -e ".[ml]"` (adds `torch`).
-2. Download `model.zip` from the official Google Drive link in the
-   [Informative Drawings README](https://github.com/carolineec/informative-drawings#testing),
-   unzip it, and locate `checkpoints/contour_style/netG_A_latest.pth`
-   (`contour_style` is recommended for photographed/printed illustrations;
-   `anime_style` and `opensketch_style` are also included in the same
-   archive).
-3. Save the file to `weights/informative_drawings.pth` (relative to
-   wherever you run the CLI from), to
-   `~/.cache/coloring_page/informative_drawings.pth`, or set the
-   `COLORING_PAGE_INFORMATIVE_DRAWINGS_WEIGHTS` environment variable to
-   point at wherever you saved it (see `.env.example`).
+1. Install the `ml` extra: `pip install -e ".[ml]"` (adds `torch` and
+   `huggingface_hub`).
+2. Get the weights, either way:
+   - **Automated (recommended)**: `python scripts/fetch_weights.py`
+     downloads both checkpoints from the `lllyasviel/Annotators` Hugging
+     Face mirror and saves them under `~/.cache/coloring_page/`. This
+     mirror's own declared license is "other" with no license text
+     confirming it carries forward `informative-drawings`'s upstream MIT
+     terms -- using it is a deliberate, documented accepted risk; see
+     `THIRD_PARTY_LICENSES.md` for the full reasoning and the
+     unambiguously-licensed alternative below.
+   - **Manual (official, unambiguously licensed)**: download `model.zip`
+     from the official Google Drive link in the
+     [Informative Drawings README](https://github.com/carolineec/informative-drawings#testing),
+     unzip it, and locate `checkpoints/contour_style/netG_A_latest.pth`
+     (`contour_style` is recommended for photographed/printed
+     illustrations; `anime_style` and `opensketch_style` are also
+     included in the same archive). Save it to
+     `weights/informative_drawings.pth` (relative to wherever you run the
+     CLI from), to `~/.cache/coloring_page/informative_drawings.pth`, or
+     set the `COLORING_PAGE_INFORMATIVE_DRAWINGS_WEIGHTS` environment
+     variable to point at wherever you saved it (see `.env.example`).
 
-Note: this project deliberately does **not** use the `controlnet_aux`
-package's `LineartDetector`, even though it loads a repackaged copy of
-these same weights and would avoid the manual download above. Its
-`lllyasviel/Annotators` weights mirror on Hugging Face declares "License:
-other" with no license text, so this project can't confirm it carries
-forward the upstream MIT terms -- see `THIRD_PARTY_LICENSES.md` for the
-full reasoning.
+`scripts/fetch_weights.py` downloads both `sk_model.pth` (fine detail) and
+`sk_model2.pth` (coarse detail); use `scripts/compare.py` to measure which
+one performs better on your own images and point
+`COLORING_PAGE_INFORMATIVE_DRAWINGS_WEIGHTS` at that one. Measured against
+this project's own three reference pairs (before the shared postprocessing
+module -- raw thresholded output only), `sk_model.pth` scored marginally
+higher on average (boundary F1 ≈0.27 vs. ≈0.26) -- the opposite of what
+"coarse detail should suit page photos better" would predict, which is
+exactly why this is measured rather than assumed.
 
-Once both steps are done, `informative_drawings` appears as a `--style`
-choice. Without them, it's simply absent from `--help` and the default
-install stays free of ML dependencies.
+Once the weights are in place, `informative_drawings` appears as a
+`--style` choice. Without them, it's simply absent from `--help` and the
+default install stays free of ML dependencies.
 
 ### `anime2sketch`
 

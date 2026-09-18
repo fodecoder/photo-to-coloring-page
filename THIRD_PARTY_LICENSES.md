@@ -72,6 +72,32 @@ project instead vendors the architecture directly and documents downloading
 weights from the original, unambiguously MIT-licensed
 `carolineec/informative-drawings` repository (see the README).
 
+### Update: `lllyasviel/Annotators` now used as an automation source (accepted risk)
+
+The paragraph above documents this project's original decision to reject
+the Hugging Face mirror `lllyasviel/Annotators` as a weights source,
+because its declared license (`other`) doesn't confirm it carries forward
+`informative-drawings`'s upstream MIT terms. That rationale is left
+unchanged above -- it accurately describes why the mirror wasn't used at
+the time.
+
+This project's owner has since decided, explicitly and knowingly, to use
+that same mirror anyway, purely for automation convenience: the official
+Google Drive source cannot be scripted (no direct download link, requires
+manual interaction), and a one-command/CI-friendly setup needs something
+scriptable. `scripts/fetch_weights.py` downloads from
+`lllyasviel/Annotators` by default, and `informative_drawings.py`'s
+missing-weights error now leads with that script.
+
+**This is an accepted risk, not a resolved question**: the mirror's
+redistribution terms are still unconfirmed to carry forward MIT. The
+official `carolineec/informative-drawings` Google Drive source remains
+documented in the README as the preferred, unambiguously-licensed
+alternative for anyone who wants to avoid this risk -- `fetch_weights.py`
+is offered alongside it, not instead of it. This entry supersedes only the
+"how weights are obtained by default" decision above, not the license
+analysis itself.
+
 Full license text:
 
 ```

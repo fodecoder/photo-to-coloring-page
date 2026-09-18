@@ -53,6 +53,25 @@ def test_missing_weights_raises_clear_error(tmp_path: Path) -> None:
         engine.convert(dummy_photo)
 
 
+def test_mismatched_checkpoint_reports_missing_keys(tmp_path: Path) -> None:
+    from coloring_page.engines._informative_drawings_arch import build_generator
+    from coloring_page.engines.informative_drawings import InformativeDrawingsEngine
+
+    # A real state dict with one key removed: strict loading should name
+    # exactly which key is missing, not just fail generically.
+    state_dict = build_generator().state_dict()
+    del state_dict[next(iter(state_dict))]
+
+    weights_path = tmp_path / "corrupted.pth"
+    torch.save(state_dict, weights_path)
+
+    engine = InformativeDrawingsEngine(weights_path=weights_path)
+    dummy_photo = np.zeros((16, 16, 3), dtype=np.uint8)
+
+    with pytest.raises(RuntimeError, match="missing_keys"):
+        engine.convert(dummy_photo)
+
+
 def test_registered_only_when_torch_available() -> None:
     from coloring_page.engines.registry import ENGINES
 

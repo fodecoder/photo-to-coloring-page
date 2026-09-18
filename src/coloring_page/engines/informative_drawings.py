@@ -62,17 +62,20 @@ def _resolve_weights_path(explicit_path: str | Path | None) -> Path:
 
 _WEIGHTS_HELP = (
     "Informative Drawings pretrained weights not found at {path}.\n"
-    "This engine requires weights that this project does not bundle or "
-    "download automatically:\n"
-    "  1. Download 'model.zip' from the official Google Drive link in the "
-    "Informative Drawings README:\n"
-    "     https://github.com/carolineec/informative-drawings#testing\n"
-    "  2. Unzip it and locate checkpoints/contour_style/netG_A_latest.pth "
-    "(or another style's netG_A_latest.pth -- contour_style is "
-    "recommended for photographed/printed illustrations).\n"
-    f"  3. Save it to {_LOCAL_WEIGHTS_PATH} (relative to the current "
-    f"directory), {DEFAULT_WEIGHTS_PATH}, or set the {WEIGHTS_ENV_VAR} "
-    "environment variable to wherever you saved it.\n"
+    "This engine requires weights that this project does not bundle:\n"
+    "  Recommended: run 'python scripts/fetch_weights.py' (requires the "
+    "'ml' extra's huggingface_hub dependency). Downloads from the "
+    "lllyasviel/Annotators Hugging Face mirror -- see "
+    "THIRD_PARTY_LICENSES.md for the license caveat this accepts.\n"
+    "  Alternative (official source, manual): download 'model.zip' from "
+    "the official Google Drive link in the Informative Drawings README "
+    "(https://github.com/carolineec/informative-drawings#testing), unzip "
+    "it, and locate checkpoints/contour_style/netG_A_latest.pth (or "
+    "another style's netG_A_latest.pth -- contour_style is recommended "
+    "for photographed/printed illustrations).\n"
+    f"  Either way, save the file to {_LOCAL_WEIGHTS_PATH} (relative to "
+    f"the current directory), {DEFAULT_WEIGHTS_PATH}, or set the "
+    f"{WEIGHTS_ENV_VAR} environment variable to wherever you saved it.\n"
     "Informative Drawings is MIT-licensed (Copyright (c) 2022 Caroline "
     "Chan); see THIRD_PARTY_LICENSES.md."
 )
@@ -130,6 +133,10 @@ class InformativeDrawingsEngine(ConversionEngine):
         FileNotFoundError
             If no weights file exists at ``self.weights_path``, with
             instructions for obtaining one.
+        RuntimeError
+            If the checkpoint at ``self.weights_path`` doesn't match the
+            generator architecture (e.g. wrong ``n_residual_blocks``),
+            naming the specific missing/unexpected keys.
         """
         if self._model is not None:
             return self._model
@@ -139,7 +146,17 @@ class InformativeDrawingsEngine(ConversionEngine):
 
         model = build_generator(self.n_residual_blocks)
         checkpoint = torch.load(self.weights_path, map_location="cpu")
-        model.load_state_dict(checkpoint)
+        # strict=False so a mismatch reports exactly which keys are
+        # missing/unexpected instead of just failing -- the default
+        # strict=True path swallows that detail into a generic message.
+        incompatible = model.load_state_dict(checkpoint, strict=False)
+        if incompatible.missing_keys or incompatible.unexpected_keys:
+            raise RuntimeError(
+                f"Checkpoint at {self.weights_path} does not match the "
+                f"generator architecture (n_residual_blocks={self.n_residual_blocks}).\n"
+                f"missing_keys: {incompatible.missing_keys}\n"
+                f"unexpected_keys: {incompatible.unexpected_keys}"
+            )
         model.eval()
 
         self._model = model
@@ -158,9 +175,7 @@ class InformativeDrawingsEngine(ConversionEngine):
         original_height, original_width = image.shape[:2]
 
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        resized = cv2.resize(
-            rgb, (self.load_size, self.load_size), interpolation=cv2.INTER_CUBIC
-        )
+        resized = cv2.resize(rgb, (self.load_size, self.load_size), interpolation=cv2.INTER_CUBIC)
         tensor = torch.from_numpy(resized).float().permute(2, 0, 1).unsqueeze(0) / 255.0
 
         with torch.no_grad():

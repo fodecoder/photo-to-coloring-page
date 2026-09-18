@@ -36,6 +36,9 @@ ml = [
     # and the add-conversion-style skill for how to wire up further new
     # engines.
     "torch>=2.0",
+    # Used by scripts/fetch_weights.py to automate downloading Informative
+    # Drawings weights from the lllyasviel/Annotators Hugging Face mirror.
+    "huggingface_hub>=0.20",
 ]
 
 [project.scripts]
