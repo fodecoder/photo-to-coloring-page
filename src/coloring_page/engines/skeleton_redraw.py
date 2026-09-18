@@ -7,85 +7,7 @@ import numpy as np
 
 from coloring_page.engines.base import ConversionEngine, DebugSink
 from coloring_page.pipeline import derive_kernel_size, remove_short_strokes
-
-#: 8-neighborhood sum kernel (excludes the center pixel itself).
-_NEIGHBOR_KERNEL = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=np.uint8)
-
-#: Offsets, in (dy, dx) order, to each of a pixel's 8 neighbors.
-_NEIGHBOR_OFFSETS = [
-    (-1, -1), (-1, 0), (-1, 1),
-    (0, -1), (0, 1),
-    (1, -1), (1, 0), (1, 1),
-]  # fmt: skip
-
-
-def _prune_short_branches(skeleton: np.ndarray, *, min_branch_length: int) -> np.ndarray:
-    """Erase dead-end skeleton spurs shorter than ``min_branch_length``.
-
-    Zhang-Suen thinning produces a spurious short dead-end branch at
-    nearly every real junction/bifurcation in the source shape, which
-    reads as a "hairy" or jittery stroke once redrawn. This walks the
-    skeleton from each endpoint (a pixel with exactly one neighbor)
-    toward the nearest junction (a pixel with three or more neighbors);
-    if that walk is shorter than ``min_branch_length``, the walked
-    pixels are erased, leaving the junction and the rest of the
-    skeleton untouched.
-
-    Parameters
-    ----------
-    skeleton : np.ndarray
-        Single-channel image, shape ``(H, W)``, dtype ``uint8``, where
-        ``255`` marks a skeleton pixel and ``0`` is background (as
-        produced by ``cv2.ximgproc.thinning``).
-    min_branch_length : int
-        Branches with fewer pixels than this are erased.
-
-    Returns
-    -------
-    np.ndarray
-        Copy of ``skeleton`` with short dead-end branches erased.
-    """
-    mask = (skeleton > 0).astype(np.uint8)
-    if not mask.any():
-        return skeleton.copy()
-
-    counts = cv2.filter2D(mask, -1, _NEIGHBOR_KERNEL, borderType=cv2.BORDER_CONSTANT) * mask
-    height, width = mask.shape
-    result = mask.copy()
-
-    endpoints = np.argwhere((mask == 1) & (counts == 1))
-    for endpoint_y, endpoint_x in endpoints:
-        if result[endpoint_y, endpoint_x] == 0:
-            continue  # already erased by pruning an earlier, overlapping endpoint
-
-        path = [(int(endpoint_y), int(endpoint_x))]
-        visited = {(int(endpoint_y), int(endpoint_x))}
-        reached_junction = False
-        y, x = int(endpoint_y), int(endpoint_x)
-
-        while len(path) <= min_branch_length:
-            candidates = [
-                (y + dy, x + dx)
-                for dy, dx in _NEIGHBOR_OFFSETS
-                if 0 <= y + dy < height
-                and 0 <= x + dx < width
-                and result[y + dy, x + dx]
-                and (y + dy, x + dx) not in visited
-            ]
-            if len(candidates) != 1:
-                break
-            y, x = candidates[0]
-            if counts[y, x] >= 3:
-                reached_junction = True
-                break
-            path.append((y, x))
-            visited.add((y, x))
-
-        if reached_junction and len(path) < min_branch_length:
-            for py, px in path:
-                result[py, px] = 0
-
-    return (result * 255).astype(skeleton.dtype)
+from coloring_page.postprocess import prune_short_branches
 
 
 class SkeletonRedrawEngine(ConversionEngine):
@@ -135,7 +57,7 @@ class SkeletonRedrawEngine(ConversionEngine):
             default 0.4.
         min_branch_length : int, optional
             Minimum surviving branch length, in pixels, passed to
-            :func:`_prune_short_branches`, by default 15.
+            :func:`prune_short_branches`, by default 15.
         polyline_epsilon : float, optional
             ``cv2.approxPolyDP`` tolerance used to smooth each traced
             contour before redrawing, in pixels, by default 1.2.
@@ -171,7 +93,7 @@ class SkeletonRedrawEngine(ConversionEngine):
             debug.save("edges", edges)
 
         skeleton = cv2.ximgproc.thinning(edges, thinningType=cv2.ximgproc.THINNING_ZHANGSUEN)
-        pruned = _prune_short_branches(skeleton, min_branch_length=self.min_branch_length)
+        pruned = prune_short_branches(skeleton, min_branch_length=self.min_branch_length)
         if debug is not None:
             debug.save("skeleton", pruned)
 
@@ -180,7 +102,11 @@ class SkeletonRedrawEngine(ConversionEngine):
         for contour in contours:
             approx = cv2.approxPolyDP(contour, self.polyline_epsilon, closed=False)
             cv2.polylines(
-                canvas, [approx], isClosed=False, color=0, thickness=line_thickness,
+                canvas,
+                [approx],
+                isClosed=False,
+                color=0,
+                thickness=line_thickness,
                 lineType=cv2.LINE_AA,
             )
         if debug is not None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from coloring_page.engines.skeleton_redraw import SkeletonRedrawEngine, _prune_short_branches
+from coloring_page.engines.skeleton_redraw import SkeletonRedrawEngine
 from coloring_page.metrics import ink_coverage
 
 
@@ -59,30 +59,7 @@ def test_debug_sink_receives_all_four_stages(synthetic_photo: np.ndarray) -> Non
     assert sink.stage_names == ["flattened", "edges", "skeleton", "redraw"]
 
 
-def test_prune_short_branches_removes_short_dead_end_spur() -> None:
-    skeleton = np.zeros((20, 30), dtype=np.uint8)
-    skeleton[10, 0:30] = 255  # a long main line
-    skeleton[10:14, 15] = 255  # a short (length-4) dead-end spur off it
-
-    pruned = _prune_short_branches(skeleton, min_branch_length=6)
-
-    assert np.all(pruned[12:14, 15] == 0)
-    assert np.all(pruned[10, 0:30] == 255)
-
-
-def test_prune_short_branches_keeps_branch_at_or_above_min_length() -> None:
-    skeleton = np.zeros((25, 30), dtype=np.uint8)
-    skeleton[10, 0:30] = 255  # a long main line
-    skeleton[10:20, 15] = 255  # a long (length-10) dead-end spur off it
-
-    pruned = _prune_short_branches(skeleton, min_branch_length=6)
-
-    assert np.all(pruned[15:20, 15] == 255)
-
-
-def test_prune_short_branches_on_blank_skeleton_is_noop() -> None:
-    skeleton = np.zeros((10, 10), dtype=np.uint8)
-
-    pruned = _prune_short_branches(skeleton, min_branch_length=6)
-
-    assert np.all(pruned == 0)
+# prune_short_branches itself is now shared in coloring_page.postprocess
+# and tested in tests/test_postprocess.py; this engine only exercises it
+# as one stage of its own pipeline (test_debug_sink_receives_all_four_stages
+# above already confirms it runs).

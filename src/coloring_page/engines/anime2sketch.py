@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Literal
 
 import cv2
 import numpy as np
@@ -18,6 +19,7 @@ import torch
 from coloring_page.engines._anime2sketch_arch import UnetGenerator, build_generator
 from coloring_page.engines.base import ConversionEngine, DebugSink
 from coloring_page.pipeline import remove_short_strokes
+from coloring_page.postprocess import soft_map_to_line_art
 
 #: Environment variable used to point at a local weights file, in place of
 #: the default lookup locations below.
@@ -95,48 +97,6 @@ def _resize_and_pad(rgb: np.ndarray, load_size: int) -> tuple[np.ndarray, tuple[
     return padded, (new_height, new_width)
 
 
-def _hysteresis_threshold(
-    gray: np.ndarray, *, strong_threshold: float, weak_threshold: float
-) -> np.ndarray:
-    """Binarize a soft grayscale sketch, keeping weak ink connected to strong ink.
-
-    A single global Otsu threshold picks one cutoff for the whole image,
-    which is a poor fit here: the sketch's histogram is dominated (often
-    ~95%) by near-white background, so Otsu's variance-splitting
-    criterion tends to land in a spot that either keeps faint pencil
-    lines as isolated noise or discards them outright. Mirroring how
-    ``cv2.Canny`` itself avoids this (two thresholds plus connectivity)
-    keeps faint linework that is actually connected to strong linework,
-    while still dropping faint, isolated specks.
-
-    Parameters
-    ----------
-    gray : np.ndarray
-        Single-channel grayscale sketch, shape ``(H, W)``, dtype
-        ``uint8``, where lower values are darker (more ink-like).
-    strong_threshold : float
-        Pixel intensity at or below which a pixel is unambiguous ink.
-    weak_threshold : float
-        Pixel intensity at or below which a pixel is a candidate for ink
-        if connected to a strong pixel. Must be ``>= strong_threshold``.
-
-    Returns
-    -------
-    np.ndarray
-        Single-channel ``uint8`` image, ``0`` for kept ink pixels and
-        ``255`` for background, same shape as ``gray``.
-    """
-    strong_mask = gray <= strong_threshold
-    weak_mask = gray <= weak_threshold
-
-    num_labels, labels = cv2.connectedComponents(weak_mask.astype(np.uint8), connectivity=8)
-    strong_labels = np.unique(labels[strong_mask])
-    strong_labels = strong_labels[strong_labels != 0]
-
-    keep = np.isin(labels, strong_labels)
-    return np.where(keep, 0, 255).astype(np.uint8)
-
-
 _WEIGHTS_HELP = (
     "Anime2Sketch pretrained weights not found at {path}.\n"
     "This engine requires weights that this project does not bundle or "
@@ -171,6 +131,7 @@ class Anime2SketchEngine(ConversionEngine):
         load_size: int = 512,
         gamma: float = 1.6,
         binarize: bool = True,
+        postprocess_strategy: Literal["nms", "hysteresis"] = "nms",
     ) -> None:
         """Store where to find the pretrained weights and inference options.
 
@@ -196,18 +157,25 @@ class Anime2SketchEngine(ConversionEngine):
             linework; lifting shadow detail beforehand (`output = input **
             (1/gamma)`) avoids that failure mode. Set to 1.0 to disable.
         binarize : bool, optional
-            Whether to threshold the network's soft, pencil-shaded output
-            into crisp black-on-white ink lines (a percentile contrast
-            stretch followed by hysteresis thresholding, see
-            :func:`_hysteresis_threshold`), by default True. This matches
-            a printed coloring-book page far better than the raw
-            grayscale sketch; set to False to keep the soft shading
-            instead.
+            Whether to turn the network's soft, pencil-shaded output into
+            crisp black-on-white ink lines via
+            :func:`~coloring_page.postprocess.soft_map_to_line_art`, by
+            default True. This matches a printed coloring-book page far
+            better than the raw grayscale sketch; set to False to keep
+            the soft shading instead.
+        postprocess_strategy : {"nms", "hysteresis"}, optional
+            Centerline-extraction strategy passed to
+            :func:`~coloring_page.postprocess.soft_map_to_line_art` when
+            ``binarize`` is True, by default ``"nms"`` (measured to
+            recover more true-positive ink than ``"hysteresis"`` on this
+            engine's output -- see ``scripts/compare.py``). Ignored
+            when ``binarize`` is False.
         """
         self.weights_path = _resolve_weights_path(weights_path)
         self.load_size = load_size
         self.gamma = gamma
         self.binarize = binarize
+        self.postprocess_strategy = postprocess_strategy
         self._model: UnetGenerator | None = None
 
     def _get_model(self) -> UnetGenerator:
@@ -271,15 +239,8 @@ class Anime2SketchEngine(ConversionEngine):
             debug.save("raw_sketch", sketch)
 
         if self.binarize:
-            low, high = np.percentile(sketch, (2, 98))
-            stretched = np.clip(
-                (sketch.astype(np.float32) - low) / max(high - low, 1) * 255, 0, 255
-            )
-            sketch = stretched.astype(np.uint8)
-            strong_threshold = float(np.percentile(sketch, 5.0))
-            weak_threshold = float(np.percentile(sketch, 15.0))
-            sketch = _hysteresis_threshold(
-                sketch, strong_threshold=strong_threshold, weak_threshold=weak_threshold
+            return soft_map_to_line_art(
+                sketch, strategy=self.postprocess_strategy, line_thickness=line_thickness
             )
 
         if line_thickness > 1:

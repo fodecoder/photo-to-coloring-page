@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Literal
 
 import cv2
 import numpy as np
@@ -24,7 +25,7 @@ import torch
 
 from coloring_page.engines._informative_drawings_arch import Generator, build_generator
 from coloring_page.engines.base import ConversionEngine, DebugSink
-from coloring_page.pipeline import remove_short_strokes
+from coloring_page.postprocess import soft_map_to_line_art
 
 #: Environment variable used to point at a local weights file, in place of
 #: the default lookup locations below.
@@ -99,6 +100,7 @@ class InformativeDrawingsEngine(ConversionEngine):
         weights_path: str | Path | None = None,
         n_residual_blocks: int = 3,
         load_size: int = 256,
+        postprocess_strategy: Literal["nms", "hysteresis"] = "nms",
     ) -> None:
         """Store where to find the pretrained weights and inference options.
 
@@ -119,10 +121,20 @@ class InformativeDrawingsEngine(ConversionEngine):
             fed through the network, by default 256, matching the size
             the upstream pretrained checkpoints were trained/tested
             with.
+        postprocess_strategy : {"nms", "hysteresis"}, optional
+            Centerline-extraction strategy passed to
+            :func:`~coloring_page.postprocess.soft_map_to_line_art`, by
+            default ``"nms"`` (measured to recover more true-positive ink
+            than ``"hysteresis"`` on this engine's output -- see
+            ``scripts/compare.py``). The network's raw sigmoid output is
+            a soft map, not a binary decision -- see that function's
+            docstring for why a plain threshold on it produces solid ink
+            blocks instead of clean lines.
         """
         self.weights_path = _resolve_weights_path(weights_path)
         self.n_residual_blocks = n_residual_blocks
         self.load_size = load_size
+        self.postprocess_strategy = postprocess_strategy
         self._model: Generator | None = None
 
     def _get_model(self) -> Generator:
@@ -194,8 +206,6 @@ class InformativeDrawingsEngine(ConversionEngine):
         if debug is not None:
             debug.save("raw_sketch", sketch)
 
-        if line_thickness > 1:
-            kernel = np.ones((line_thickness, line_thickness), np.uint8)
-            sketch = cv2.erode(sketch, kernel, iterations=1)
-
-        return remove_short_strokes(sketch)
+        return soft_map_to_line_art(
+            sketch, strategy=self.postprocess_strategy, line_thickness=line_thickness
+        )
