@@ -50,8 +50,8 @@ Un tratto scuro largo 6 px non diventa una linea: diventa il suo contorno.
 
 ```python
 soft = np.full((60, 120), 255, np.uint8)
-soft[20:26, 10:110] = 20            # tratto spesso 6 px
-soft[45:47, 10:110] = 20            # tratto spesso 2 px
+soft[20:26, 10:110] = 20  # tratto spesso 6 px
+soft[45:47, 10:110] = 20  # tratto spesso 2 px
 
 nms_centerline(normalize_percentile(soft))
 # righe con inchiostro: [19, 20, 21, 22, 23, 24, 25,  44, 45, 46]
@@ -83,7 +83,7 @@ dell'immagine.
 ## 3. Bug: `informative_drawings` gira alla risoluzione sbagliata
 
 ```python
-resized = cv2.resize(rgb, (self.load_size, self.load_size))   # load_size = 256
+resized = cv2.resize(rgb, (self.load_size, self.load_size))  # load_size = 256
 ```
 
 Tre difetti in una riga:
@@ -116,6 +116,64 @@ post-processing:
 **+82 % di F1 senza toccare la rete né i pesi**, e il numero cresce ancora con
 la risoluzione: il modello è completamente convoluzionale, la costante 256 non
 ha alcuna giustificazione.
+
+### Riverifica 2026-09-21 con torch reale, `detect_resolution` 512–1536
+
+La tabella sopra è stata misurata con una reimplementazione NumPy della rete
+(l'ambiente di allora non aveva PyTorch). Il codice attuale
+(`_resize_short_side`, `detect_resolution` di default 1024,
+`postprocess_strategy="hysteresis"`) implementa già i punti 1-3 e 5 del
+checklist di `IMPROVEMENT-PROMPT-3.md`; restava da rifare la tabella con
+torch vero e misurare anche 1280/1536, come richiesto lì esplicitamente
+("se diverge di più del 3% di F1, fermati").
+
+Rieseguita con `weights/informative_drawings.pth` (checkpoint "fine",
+SHA256 `c686ced2...`, stesso pinnato dal commit che l'ha scelto), ai
+parametri di default correnti (`postprocess_strategy="hysteresis"`),
+`coloring_page.metrics.compare_boundaries` sulle 3 coppie di riferimento:
+
+| detect_resolution | F1@2 (img1) | F1@4 (img1) | F1@4 (img5) | F1@4 (img7*) | inchiostro (img1) |
+|---:|---:|---:|---:|---:|---:|
+| 512  | 0.085 | 0.318 | 0.432 | 0.229 | 9.4 % |
+| 768  | 0.269 | 0.467 | 0.611 | 0.294 | 8.3 % |
+| **1024** | **0.364** | **0.525** | 0.681 | 0.284 | 7.3 % |
+| 1280 | 0.405 | 0.550 | 0.709 | 0.263 | 6.6 % |
+| 1536 | 0.415 | 0.563 | 0.721 | 0.242 | 6.1 % |
+
+\* `starting-image-7.jpeg`/`desired-7.jpg` ha aspect ratio diverso dal
+riferimento (vedi §7): i suoi numeri sono approssimati e infatti è l'unica
+coppia dove F1 *cala* oltre 768 invece di continuare a salire.
+
+**Il numero a 1024 (F1@4 = 0.525) diverge dalla stima NumPy (0.713) di
+molto più del 3% dichiarato come soglia d'allarme.** Prima di considerare
+il fix acquisito sono stati controllati arch e checkpoint:
+
+- `state_dict` del checkpoint pinnato carica nel generatore attuale con
+  `missing_keys=[]` e `unexpected_keys=[]` -- nessun mismatch strutturale;
+- lo SHA256 del file in `weights/` coincide esattamente con quello pinnato
+  in `scripts/fetch_weights.py` per `sk_model.pth`;
+- il commit `2913653` (confronto fine/coarse) aveva già misurato con torch
+  reale, a `detect_resolution=1024` ma `strategy="nms"`: f1_normalized
+  0.507 (img1), 0.705 (img5), 0.258 (img7) -- valori dello stesso ordine di
+  grandezza di quelli di questa tabella (0.525, 0.681, 0.284 con
+  `"hysteresis"`), misurati da un run indipendente, mesi prima, con un
+  altro strategy di default.
+
+Due misure indipendenti con torch reale concordano fra loro e divergono
+entrambe dalla stima NumPy. La spiegazione più probabile non è un bug
+nell'arch/checkpoint attuale (verificato pulito sopra), ma un'imprecisione
+della reimplementazione NumPy usata per la diagnosi originale -- la tabella
+NumPy andava trattata come una stima direzionale, non come un valore
+acquisito, esattamente come il prompt stesso avvertiva.
+
+**Curva e default**: F1@4 su img1/img5 sale ancora da 1024 a 1536, ma con
+rendimenti calanti (+0.038 e +0.040 assoluti da 1024 a 1536, contro +0.207
+e +0.156 da 512 a 1024) a fronte di un costo che cresce quadraticamente col
+lato (1536² / 1024² ≈ 2.25×). 1024 resta il ginocchio ragionevole della
+curva e l'inchiostro (7.3% / 8.2% sulle coppie senza mismatch di aspect
+ratio) è il più vicino alla banda 3-7% fra tutte le risoluzioni misurate.
+**Nessuna modifica al default proposta**: `detect_resolution=1024` resta
+invariato.
 
 ### Checkpoint: probabilmente quello sbagliato
 
@@ -175,6 +233,15 @@ Due letture, entrambe fatali per il criterio attuale:
 
 Finché la metrica resta quella attuale, ogni taratura futura sarà guidata nella
 direzione sbagliata — è già successo due volte.
+
+**Nota (2026-09-21)**: le correzioni sopra sono state applicate, ma questa
+metrica resta comunque un confronto con un riferimento artisticamente
+reinterpretato, non una misura diretta di colorabilità. È stata quindi
+spostata in `scripts/metrics.py` come strumento diagnostico per lo sviluppo
+(confrontare motori fra loro), e sostituita come criterio di accettazione
+da `coloring_page.validate.QualityReport` (ink coverage, regioni chiuse vs.
+"leaking", endpoint di contorno pendenti) — vedi il README, sezione
+"Validating output".
 
 ---
 

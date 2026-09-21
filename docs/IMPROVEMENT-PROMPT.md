@@ -215,6 +215,7 @@ ridistribuiti su Hugging Face nel repo `lllyasviel/Annotators` e sono usabili vi
 
 ```python
 from controlnet_aux import LineartDetector
+
 detector = LineartDetector.from_pretrained("lllyasviel/Annotators")
 line_art = detector(pil_image, coarse=False)
 ```

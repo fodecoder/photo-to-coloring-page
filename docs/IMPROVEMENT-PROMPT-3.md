@@ -136,8 +136,8 @@ Riproduzione:
 
 ```python
 soft = np.full((60, 120), np.uint8(255))
-soft[20:26, 10:110] = 20            # tratto spesso 6 px
-soft[45:47, 10:110] = 20            # tratto spesso 2 px
+soft[20:26, 10:110] = 20  # tratto spesso 6 px
+soft[45:47, 10:110] = 20  # tratto spesso 2 px
 
 nms_centerline(normalize_percentile(soft))
 # righe con inchiostro: [19, 20, 21, 22, 23, 24, 25,  44, 45, 46]
