@@ -50,6 +50,12 @@ def test_resize_and_pad_square_input_needs_no_padding() -> None:
     assert padded.shape[:2] == (256, 256)
 
 
+def test_postprocess_strategy_defaults_to_hysteresis() -> None:
+    from coloring_page.engines.anime2sketch import Anime2SketchEngine
+
+    assert Anime2SketchEngine().postprocess_strategy == "hysteresis"
+
+
 # hysteresis_threshold itself moved to coloring_page.postprocess and is
 # tested in tests/test_postprocess.py; test_binarize_true_produces_pure_black_and_white
 # below already confirms this engine's binarize path runs it end to end.

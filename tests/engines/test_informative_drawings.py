@@ -43,6 +43,12 @@ def test_generator_output_is_sigmoid_bounded() -> None:
     assert output.max().item() <= 1.0
 
 
+def test_postprocess_strategy_defaults_to_hysteresis() -> None:
+    from coloring_page.engines.informative_drawings import InformativeDrawingsEngine
+
+    assert InformativeDrawingsEngine().postprocess_strategy == "hysteresis"
+
+
 def test_missing_weights_raises_clear_error(tmp_path: Path) -> None:
     from coloring_page.engines.informative_drawings import InformativeDrawingsEngine
 

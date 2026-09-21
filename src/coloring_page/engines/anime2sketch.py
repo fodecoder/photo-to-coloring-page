@@ -131,7 +131,7 @@ class Anime2SketchEngine(ConversionEngine):
         load_size: int = 512,
         gamma: float = 1.6,
         binarize: bool = True,
-        postprocess_strategy: Literal["nms", "hysteresis"] = "nms",
+        postprocess_strategy: Literal["nms", "hysteresis"] = "hysteresis",
     ) -> None:
         """Store where to find the pretrained weights and inference options.
 
@@ -166,23 +166,25 @@ class Anime2SketchEngine(ConversionEngine):
         postprocess_strategy : {"nms", "hysteresis"}, optional
             Centerline-extraction strategy passed to
             :func:`~coloring_page.postprocess.soft_map_to_line_art` when
-            ``binarize`` is True, by default ``"nms"``
-            (:func:`~coloring_page.postprocess.gradient_edges`). That
-            default is a deliberate, temporary exception to
-            ``soft_map_to_line_art``'s own default of ``"hysteresis"``:
-            ``"nms"`` doubles every stroke into its two edges rather than
-            a true centerline (see that function's docstring), which is a
-            real bug, but this network's soft output is wide/blurry
-            (~12% ink after thresholding), and skeletonizing that down to
-            a proper 1px centerline collapses ink coverage to ~2% --
-            below this project's 3-7% admissibility band -- which
-            crashes recall far more than the doubling bug costs
-            precision. Measured with ``scripts/compare.py``: switching to
+            ``binarize`` is True, by default ``"hysteresis"``, matching
+            that function's own default. This is a forced override, not a
+            re-validated choice: this network's soft output is
+            wide/blurry (~12% ink after thresholding), and skeletonizing
+            that down to a proper 1px centerline collapses ink coverage
+            to ~2% -- below this project's 3-7% admissibility band --
+            which crashes recall far more than ``"nms"``
+            (:func:`~coloring_page.postprocess.gradient_edges`) doubling
+            every stroke into its two edges costs precision. Measured
+            with ``scripts/compare.py``: switching from ``"nms"`` to
             ``"hysteresis"`` drops this engine's ``f1_normalized`` on all
-            3 reference pairs (e.g. 0.322 -> 0.164 on
-            ``starting-image.jpeg``). Revisit once
-            ``hysteresis_centerline``'s thresholds are retuned for this
-            network's output, or a sharper soft map is available.
+            3 reference pairs (0.447/0.183/0.322 ->
+            0.193/0.110/0.164). The default is set to ``"hysteresis"``
+            anyway, for consistency with ``soft_map_to_line_art`` and
+            because a doubled-edge output is not a centerline regardless
+            of what it scores. Pass ``postprocess_strategy="nms"``
+            explicitly to restore the higher-scoring behavior. Revisit
+            once ``hysteresis_centerline``'s thresholds are retuned for
+            this network's output, or a sharper soft map is available.
             Ignored when ``binarize`` is False.
         """
         self.weights_path = _resolve_weights_path(weights_path)

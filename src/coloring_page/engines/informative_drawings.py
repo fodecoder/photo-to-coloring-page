@@ -151,7 +151,7 @@ class InformativeDrawingsEngine(ConversionEngine):
         weights_path: str | Path | None = None,
         n_residual_blocks: int = 3,
         detect_resolution: int = 1024,
-        postprocess_strategy: Literal["nms", "hysteresis"] = "nms",
+        postprocess_strategy: Literal["nms", "hysteresis"] = "hysteresis",
     ) -> None:
         """Store where to find the pretrained weights and inference options.
 
@@ -181,22 +181,23 @@ class InformativeDrawingsEngine(ConversionEngine):
         postprocess_strategy : {"nms", "hysteresis"}, optional
             Centerline-extraction strategy passed to
             :func:`~coloring_page.postprocess.soft_map_to_line_art`, by
-            default ``"nms"`` (:func:`~coloring_page.postprocess.gradient_edges`).
-            That default is a deliberate exception to
-            ``soft_map_to_line_art``'s own default of ``"hysteresis"``:
-            ``"nms"`` doubles every stroke into its two edges rather than
-            a true centerline (see that function's docstring), which was
-            expected to stop being a net win once ``detect_resolution``
-            was fixed (it no longer needs to compensate for an
-            excessively blurry soft map). Re-measured at
-            ``detect_resolution=1024`` with ``scripts/compare.py`` after
-            that fix, it still isn't: ``"nms"`` ties or wins on
-            ``f1_normalized`` on all 3 reference pairs (0.500 vs 0.503,
-            0.678 vs 0.609, 0.265 vs 0.230) -- its higher recall still
-            outweighs its lower precision here. Revisit if
+            default ``"hysteresis"``, matching that function's own
+            default. This is a forced override, not a re-validated
+            choice: measured with ``scripts/compare.py`` at
+            ``detect_resolution=1024``, ``"nms"``
+            (:func:`~coloring_page.postprocess.gradient_edges`) still ties
+            or wins on ``f1_normalized`` on all 3 reference pairs (0.500
+            vs 0.503, 0.678 vs 0.609, 0.265 vs 0.230) -- its higher recall
+            still outweighs its lower precision here, because doubling
+            every stroke into its two edges (see ``gradient_edges``'s
+            docstring) inflates ink coverage without leaving the
+            admissibility band. The default is set to ``"hysteresis"``
+            anyway, for consistency with ``soft_map_to_line_art`` and
+            because a doubled-edge output is not a centerline regardless
+            of what it scores. Pass ``postprocess_strategy="nms"``
+            explicitly to restore the higher-scoring behavior. Revisit if
             ``hysteresis_centerline``'s thresholds are retuned for this
-            network's output, or after Phase 3's checkpoint choice
-            changes the soft map's character.
+            network's output, or a sharper soft map becomes available.
         """
         self.weights_path = _resolve_weights_path(weights_path)
         self.n_residual_blocks = n_residual_blocks
