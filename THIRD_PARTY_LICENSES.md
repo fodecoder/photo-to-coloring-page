@@ -123,3 +123,48 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## SAM 2 (`lineart` engine, Stage A)
+
+- **Package**: `sam2` (the `lineart` optional extra)
+- **Source**: https://github.com/facebookresearch/sam2
+- **License**: Apache License 2.0
+- **Copyright**: (c) Meta Platforms, Inc. and affiliates
+- **Weights**: `sam2.1_hiera_small.pt`, from the official
+  `facebook/sam2.1-hiera-small` Hugging Face repository (no mirror --
+  unlike Informative Drawings, this is the project's own official
+  redistribution). SAM 2's checkpoints are released under the same
+  Apache-2.0 terms as the code.
+
+Nothing from `sam2` is vendored into this repository's source -- it is
+used only as an installed dependency
+(`src/coloring_page/engines/_lineart_seg.py`), so no license text
+reproduction is required here beyond attribution; the full Apache-2.0
+text is available at
+https://github.com/facebookresearch/sam2/blob/main/LICENSE.
+
+## controlnet_aux `lineart_anime` checkpoint (`lineart` engine, Stage B) -- UNVERIFIED, BLOCKS MERGE
+
+- **Package**: `controlnet_aux` (the `lineart` optional extra)
+- **Checkpoint**: `netG.pth`, served from the `lllyasviel/Annotators`
+  Hugging Face mirror (see `scripts/fetch_weights.py`) -- the same
+  repository already flagged above as an accepted, still-unconfirmed
+  redistribution-license risk for the Informative Drawings checkpoints.
+- **`controlnet_aux` package license**: Apache License 2.0 (confirmed).
+- **Checkpoint's own upstream license**: **not yet confirmed** as of this
+  engine's implementation. `lineart_anime` traces back to a distinct
+  upstream project from Informative Drawings/Anime2Sketch (both already
+  documented above); that upstream project's own license, and whether
+  `lllyasviel/Annotators`'s redistribution of it carries those terms
+  forward, has not been identified and verified here.
+
+**This project's `add-conversion-style` skill requires the license of any
+external model to be identified and confirmed to permit the intended use
+(including commercial/redistribution use) before a new ML-backed engine is
+merged.** That step is not complete for this checkpoint -- `lineart.py`'s
+Stage B is implemented and tested (with injected stubs, no real weights
+involved), but this checkpoint must not be fetched or relied on for real
+output, and this engine must not be promoted past `experimental` status,
+until this entry is replaced with a confirmed upstream license (or an
+explicit, documented accepted-risk decision, mirroring the Informative
+Drawings precedent above).
