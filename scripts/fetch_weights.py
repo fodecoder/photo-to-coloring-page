@@ -9,10 +9,25 @@ documented departure from that project's originally-preferred official
 source -- see THIRD_PARTY_LICENSES.md for why, and for the residual
 licensing risk this accepts.
 
-Two checkpoints are available: `sk_model.pth` (fine detail) and
-`sk_model2.pth` (coarse detail). Which one performs best on this project's
-reference images is an empirical question -- see the README for how to
-measure both with `scripts/compare.py` and choose.
+Two Informative Drawings checkpoints are available: `sk_model.pth` (fine
+detail) and `sk_model2.pth` (coarse detail). Which one performs best on
+this project's reference images is an empirical question -- see the README
+for how to measure both with `scripts/compare.py` and choose.
+
+A third checkpoint, `sam2.1_hiera_small.pt`, is SAM 2.1's Hiera-small
+checkpoint, redistributed on its own official Hugging Face repository
+(unlike Informative Drawings, no mirror is needed). It's used by
+`scripts/spike_segmentation.py`'s region-partition spike -- see
+docs/DIAGNOSIS.md -- and by the `lineart` engine's Stage A
+(src/coloring_page/engines/lineart.py).
+
+A fourth checkpoint, `netG.pth`, is controlnet_aux's `lineart_anime`
+preprocessor weights, used by the `lineart` engine's Stage B for fine
+internal detail (facial features, folds, deliberate patterns) SAM's
+region partition alone can't see -- see docs/PRODUCTION-PROMPTS.md's
+Prompt 3. Kept as `netG.pth` (not renamed like the Informative Drawings
+checkpoints) since controlnet_aux's own loader expects to find it under
+that exact name.
 
 Usage
 -----
@@ -20,63 +35,94 @@ Usage
 
     python scripts/fetch_weights.py --filename sk_model2.pth
     python scripts/fetch_weights.py --filename sk_model.pth --dest weights/informative_drawings.pth
+    python scripts/fetch_weights.py --filename sam2.1_hiera_small.pt
+    python scripts/fetch_weights.py --filename netG.pth --dest weights/netG.pth
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import shutil
 import sys
 from pathlib import Path
 
-#: Repository the weights are redistributed from. See module docstring and
-#: THIRD_PARTY_LICENSES.md for the license caveat attached to this source.
-_REPO_ID = "lllyasviel/Annotators"
+from coloring_page.weights import CHECKSUMS, _sha256, resolve_weights_dir
 
-#: Default destination, matching informative_drawings.py's own fallback
-#: resolution path (DEFAULT_WEIGHTS_PATH) so a fetched file is found
-#: automatically without also setting the env var.
-_DEFAULT_DEST = Path.home() / ".cache" / "coloring_page" / "informative_drawings.pth"
-
-#: SHA256 of each checkpoint on the lllyasviel/Annotators mirror, pinned
-#: after comparing both with scripts/compare.py (see docs/DIAGNOSIS.md's
-#: Phase 3 and the commit that added this): sk_model.pth ("fine" detail)
-#: measured a higher f1_normalized on 2 of the 3 reference pairs and is
-#: this project's chosen default; sk_model2.pth ("coarse") is kept
-#: fetchable and pinned too, for anyone who wants to compare again on
-#: their own images. A filename not in this dict has no expected hash to
-#: check against -- fetch_weights() falls back to printing it instead.
-_PINNED_SHA256 = {
-    "sk_model.pth": "c686ced2a666b4850b4bb6ccf0748031c3eda9f822de73a34b8979970d90f0c6",
-    "sk_model2.pth": "30a534781061f34e83bb9406b4335da4ff2616c95d22a585c1245aa8363e74e0",
+#: Per-checkpoint source repository and default destination filename. See
+#: module docstring and THIRD_PARTY_LICENSES.md for the license caveat
+#: attached to the lllyasviel/Annotators mirror.
+_CHECKPOINTS: dict[str, dict[str, str]] = {
+    "sk_model.pth": {
+        "repo_id": "lllyasviel/Annotators",
+        "dest_name": "informative_drawings.pth",
+    },
+    "sk_model2.pth": {
+        "repo_id": "lllyasviel/Annotators",
+        "dest_name": "informative_drawings.pth",
+    },
+    "sam2.1_hiera_small.pt": {
+        "repo_id": "facebook/sam2.1-hiera-small",
+        "dest_name": "sam2.1_hiera_small.pt",
+    },
+    # controlnet_aux's LineartAnimeDetector loads this same filename from
+    # this same repository by default (its own from_pretrained call), and
+    # expects to find it under exactly this name in whatever directory is
+    # handed to from_pretrained() -- kept as "netG.pth" here too (rather
+    # than renamed like the Informative Drawings checkpoints) so the
+    # `lineart` engine's weights directory just works when pointed at
+    # LineartAnimeDetector.from_pretrained(), while still going through
+    # this project's own weights-path convention (explicit path / env var
+    # / weights/ / per-user cache, see lineart.py's _resolve_weights_path)
+    # instead of relying on controlnet_aux's separate download/cache.
+    "netG.pth": {
+        "repo_id": "lllyasviel/Annotators",
+        "dest_name": "netG.pth",
+    },
 }
 
+#: Cache directory every checkpoint's default destination lives under,
+#: matching each engine's own fallback resolution path (see
+#: coloring_page.weights.resolve_weights_dir, which this respects the
+#: COLORING_PAGE_WEIGHTS_DIR override of) so a fetched file is found
+#: automatically without also setting a per-engine env var.
+_CACHE_DIR = resolve_weights_dir()
 
-def _sha256(path: Path) -> str:
-    """Compute a file's SHA256 hex digest, reading it in fixed-size chunks."""
-    digest = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+#: SHA256 of each checkpoint this project knows how to fetch -- imported
+#: from coloring_page.weights so this script's download-time check and
+#: every engine's load-time check (coloring_page.weights.verify_checksum)
+#: share one pinned source of truth. See that module's docstring and
+#: docs/DIAGNOSIS.md's Phase 3 for how each entry was obtained:
+#: sk_model.pth ("fine" detail) measured a higher f1_normalized on 2 of the
+#: 3 reference pairs and is this project's chosen Informative Drawings
+#: default; sk_model2.pth ("coarse") is kept fetchable and pinned too, for
+#: anyone who wants to compare again on their own images. A filename not in
+#: this dict has no expected hash to check against -- fetch_weights() falls
+#: back to printing it instead, never fabricating one.
+_PINNED_SHA256 = CHECKSUMS
+
+#: Fallback base path used only to derive suffixed destinations when
+#: fetching multiple checkpoints that share the same default ``dest_name``
+#: (the two Informative Drawings checkpoints) without an explicit --dest.
+_DEFAULT_DEST = _CACHE_DIR / "informative_drawings.pth"
 
 
 def fetch_weights(
-    filename: str, *, dest: Path = _DEFAULT_DEST, expected_sha256: str | None = None
+    filename: str, *, dest: Path | None = None, expected_sha256: str | None = None
 ) -> Path:
-    """Download one checkpoint from the Hugging Face mirror and copy it to ``dest``.
+    """Download one checkpoint from its Hugging Face repository and copy it to ``dest``.
 
     Parameters
     ----------
     filename : str
-        Checkpoint filename in the ``lllyasviel/Annotators`` repository,
-        e.g. ``"sk_model.pth"`` or ``"sk_model2.pth"``.
-    dest : Path, optional
-        Where to copy the downloaded file, by default
-        ``~/.cache/coloring_page/informative_drawings.pth`` (the same path
-        ``InformativeDrawingsEngine`` falls back to when no weights path is
-        given explicitly).
+        Checkpoint filename, one of the keys of ``_CHECKPOINTS`` (e.g.
+        ``"sk_model.pth"``, ``"sk_model2.pth"``, or
+        ``"sam2.1_hiera_small.pt"``); its source repository is looked up
+        from that registry.
+    dest : Path | None, optional
+        Where to copy the downloaded file. If omitted (the default), uses
+        ``~/.cache/coloring_page/<dest_name>``, the same path each
+        engine/script falls back to when no weights path is given
+        explicitly (e.g. ``InformativeDrawingsEngine``).
     expected_sha256 : str | None, optional
         If given, the download is verified against this hash and a
         ``ValueError`` is raised on mismatch. If omitted (the default),
@@ -92,7 +138,13 @@ def fetch_weights(
     """
     from huggingface_hub import hf_hub_download
 
-    downloaded_path = Path(hf_hub_download(repo_id=_REPO_ID, filename=filename))
+    if filename not in _CHECKPOINTS:
+        raise ValueError(f"Unknown checkpoint {filename!r}; expected one of {sorted(_CHECKPOINTS)}")
+    checkpoint = _CHECKPOINTS[filename]
+    if dest is None:
+        dest = _CACHE_DIR / checkpoint["dest_name"]
+
+    downloaded_path = Path(hf_hub_download(repo_id=checkpoint["repo_id"], filename=filename))
     digest = _sha256(downloaded_path)
 
     if expected_sha256 is None:
@@ -114,23 +166,23 @@ def fetch_weights(
 def build_parser() -> argparse.ArgumentParser:
     """Construct this script's argument parser."""
     parser = argparse.ArgumentParser(
-        description=(
-            "Download Informative Drawings pretrained weights from the "
-            "lllyasviel/Annotators Hugging Face mirror."
-        )
+        description="Download pretrained checkpoints used by this project's optional engines."
     )
     parser.add_argument(
         "--filename",
-        choices=["sk_model.pth", "sk_model2.pth"],
+        choices=sorted(_CHECKPOINTS),
         default=None,
-        help="Which checkpoint to fetch (default: both, saved as -sk_model and -sk_model2 "
-        "suffixed copies next to --dest so both can be compared).",
+        help="Which checkpoint to fetch (default: both Informative Drawings checkpoints, "
+        "saved as -sk_model and -sk_model2 suffixed copies next to --dest so both can be "
+        "compared; does not include sam2.1_hiera_small.pt, which must be requested explicitly).",
     )
     parser.add_argument(
         "--dest",
         type=Path,
-        default=_DEFAULT_DEST,
-        help=f"Where to copy the downloaded file (default: {_DEFAULT_DEST}).",
+        default=None,
+        help="Where to copy the downloaded file (default: "
+        f"{_CACHE_DIR}/<checkpoint's own filename>, e.g. {_DEFAULT_DEST} for the Informative "
+        "Drawings checkpoints).",
     )
     parser.add_argument(
         "--expected-sha256",
@@ -164,11 +216,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         for filename in filenames:
             if len(filenames) > 1:
-                dest = args.dest.with_name(f"{args.dest.stem}-{filename.removesuffix('.pth')}.pth")
+                base = args.dest if args.dest is not None else _DEFAULT_DEST
+                dest = base.with_name(f"{base.stem}-{filename.removesuffix('.pth')}.pth")
             else:
                 dest = args.dest
-            fetch_weights(filename, dest=dest, expected_sha256=args.expected_sha256)
-            print(f"Saved {filename} -> {dest}")
+            saved_to = fetch_weights(filename, dest=dest, expected_sha256=args.expected_sha256)
+            print(f"Saved {filename} -> {saved_to}")
     except (OSError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

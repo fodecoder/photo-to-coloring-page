@@ -24,15 +24,16 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-
-from coloring_page.engines.registry import ENGINES, get_engine
-from coloring_page.metrics import (
+from metrics import (
     BoundaryMetrics,
     compare_boundaries,
     compute_metrics,
     degenerate_floor,
 )
-from coloring_page.pipeline import SUPPORTED_INPUT_SUFFIXES, convert_image, load_image
+
+from coloring_page.drawing import rasterize
+from coloring_page.engines.registry import ENGINES, get_engine
+from coloring_page.pipeline import SUPPORTED_INPUT_SUFFIXES, load_image, run_pipeline
 
 #: Height, in pixels, of the label strip drawn above each contact-sheet tile.
 _LABEL_HEIGHT = 24
@@ -91,6 +92,11 @@ def _label_tile(image: np.ndarray, label: str) -> np.ndarray:
 def _convert_with_style(image: np.ndarray, style: str) -> np.ndarray | None:
     """Run one style, returning ``None`` (and a stderr warning) on failure.
 
+    Rasterizes the engine's vector ``Drawing`` back to a raster image (via
+    the stopgap :func:`~coloring_page.drawing.rasterize`) at the source
+    image's own long side, so every downstream metric/contact-sheet call
+    in this script keeps working on plain ``np.ndarray`` output.
+
     A style can fail per-image for reasons unrelated to the comparison
     itself -- most notably ``anime2sketch`` raising ``FileNotFoundError``
     when its pretrained weights haven't been downloaded. One missing
@@ -98,7 +104,8 @@ def _convert_with_style(image: np.ndarray, style: str) -> np.ndarray | None:
     """
     try:
         engine = get_engine(style)
-        return convert_image(image, engine)
+        drawing = run_pipeline(image, engine)
+        return rasterize(drawing, long_side_px=max(image.shape[:2]))
     except (FileNotFoundError, ValueError, OSError) as exc:
         print(f"Skipping style {style!r}: {exc}", file=sys.stderr)
         return None
