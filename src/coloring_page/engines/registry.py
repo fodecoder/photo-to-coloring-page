@@ -7,6 +7,8 @@ automatically become available as a ``--style`` choice in the CLI. See
 
 from __future__ import annotations
 
+import inspect
+
 from coloring_page.engines.adaptive import AdaptiveEngine
 from coloring_page.engines.base import ConversionEngine
 from coloring_page.engines.canny import CannyEngine
@@ -15,6 +17,7 @@ from coloring_page.engines.chained import ChainedEngine
 from coloring_page.engines.region import RegionEngine
 from coloring_page.engines.skeleton_redraw import SkeletonRedrawEngine
 from coloring_page.engines.xdog import XDoGEngine
+from coloring_page.exceptions import EngineUnavailableError
 
 ENGINES: dict[str, type[ConversionEngine]] = {
     "canny": CannyEngine,
@@ -47,14 +50,29 @@ else:
 
     ENGINES["gated"] = GatedEngine
 
+try:
+    from coloring_page.engines.lineart import LineArtEngine
+except ImportError:
+    # The `lineart` extra (torch, sam2, controlnet_aux) isn't installed --
+    # this engine simply doesn't appear as a `--style` choice unless
+    # `pip install -e ".[lineart]"` was run.
+    pass
+else:
+    ENGINES["lineart"] = LineArtEngine
 
-def get_engine(style: str) -> ConversionEngine:
+
+def get_engine(style: str, *, device: str = "auto") -> ConversionEngine:
     """Instantiate the conversion engine registered under ``style``.
 
     Parameters
     ----------
     style : str
         One of the keys in ``ENGINES`` (e.g. ``"canny"``).
+    device : str, optional
+        Inference device, by default ``"auto"``. Passed to the engine's
+        constructor only when it accepts a ``device`` parameter (checked
+        via ``inspect.signature``) -- classical (non-ML) engines don't,
+        and are constructed with no arguments regardless of this value.
 
     Returns
     -------
@@ -63,12 +81,18 @@ def get_engine(style: str) -> ConversionEngine:
 
     Raises
     ------
-    ValueError
-        If ``style`` is not a registered engine name.
+    EngineUnavailableError
+        If ``style`` is not a registered engine name (either unknown
+        outright, or registered only behind an optional extra that isn't
+        installed).
     """
     try:
         engine_cls = ENGINES[style]
     except KeyError as exc:
         available = ", ".join(sorted(ENGINES))
-        raise ValueError(f"Unknown style {style!r}. Available styles: {available}") from exc
+        raise EngineUnavailableError(
+            f"Unknown style {style!r}. Available styles: {available}"
+        ) from exc
+    if "device" in inspect.signature(engine_cls.__init__).parameters:
+        return engine_cls(device=device)  # type: ignore[call-arg]
     return engine_cls()

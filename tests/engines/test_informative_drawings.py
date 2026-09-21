@@ -13,6 +13,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from coloring_page.exceptions import WeightsMissingError
+
 torch = pytest.importorskip("torch")
 
 
@@ -55,7 +57,7 @@ def test_missing_weights_raises_clear_error(tmp_path: Path) -> None:
     engine = InformativeDrawingsEngine(weights_path=tmp_path / "missing-weights.pth")
     dummy_photo = np.zeros((16, 16, 3), dtype=np.uint8)
 
-    with pytest.raises(FileNotFoundError, match="not found"):
+    with pytest.raises(WeightsMissingError, match="not found"):
         engine.convert(dummy_photo)
 
 
@@ -101,6 +103,12 @@ def test_registered_only_when_torch_available() -> None:
     assert "informative_drawings" in ENGINES
 
 
+def test_requires_serial_execution_is_true() -> None:
+    from coloring_page.engines.informative_drawings import InformativeDrawingsEngine
+
+    assert InformativeDrawingsEngine.requires_serial_execution is True
+
+
 def test_local_weights_folder_is_preferred_over_cache_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -108,6 +116,7 @@ def test_local_weights_folder_is_preferred_over_cache_dir(
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("COLORING_PAGE_INFORMATIVE_DRAWINGS_WEIGHTS", raising=False)
+    monkeypatch.delenv("COLORING_PAGE_WEIGHTS_DIR", raising=False)
     local_weights = tmp_path / "weights" / "informative_drawings.pth"
     local_weights.parent.mkdir()
     local_weights.write_bytes(b"not a real checkpoint")
@@ -153,7 +162,8 @@ def test_real_weights_produce_grayscale_line_art(synthetic_photo: np.ndarray) ->
     from coloring_page.engines.informative_drawings import InformativeDrawingsEngine
 
     engine = InformativeDrawingsEngine()
-    result = engine.convert(synthetic_photo)
+    drawing = engine.convert(synthetic_photo)
 
-    assert result.shape == synthetic_photo.shape[:2]
-    assert result.dtype == np.uint8
+    assert len(drawing.paths) > 0
+    for path in drawing.paths:
+        assert len(path.points) >= 2

@@ -7,9 +7,9 @@ from typing import cast
 import cv2
 import numpy as np
 
+from coloring_page.drawing import Drawing, paths_from_point_chains, rasterize
 from coloring_page.engines.base import ConversionEngine, DebugSink
-from coloring_page.pipeline import derive_kernel_size, remove_short_strokes
-from coloring_page.postprocess import redraw_segments
+from coloring_page.pipeline import derive_kernel_size
 
 
 def detect_edge_chains(
@@ -111,6 +111,7 @@ class ChainedEngine(ConversionEngine):
     """
 
     name = "chained"
+    experimental = True
 
     def __init__(
         self,
@@ -171,10 +172,8 @@ class ChainedEngine(ConversionEngine):
         self.nfa_validation = nfa_validation
         self.polyline_epsilon = polyline_epsilon
 
-    def convert(
-        self, image: np.ndarray, *, line_thickness: int = 1, debug: DebugSink | None = None
-    ) -> np.ndarray:
-        """Flatten texture, chain edges, then redraw them as smooth strokes.
+    def convert(self, image: np.ndarray, *, debug: DebugSink | None = None) -> Drawing:
+        """Flatten texture, chain edges, then trace them as vector paths.
 
         See Also
         --------
@@ -193,15 +192,19 @@ class ChainedEngine(ConversionEngine):
             debug=debug,
         )
 
-        canvas = redraw_segments(
-            segments,
-            gray.shape,
-            polyline_epsilon=self.polyline_epsilon,
-            line_thickness=line_thickness,
-        )
-        if debug is not None:
-            debug.save("redraw", canvas)
+        # EdgeDrawing's chains are already exact traced geometry --
+        # wrapping them directly (rather than rasterizing to a mask and
+        # re-tracing with paths_from_mask) avoids quantizing precision
+        # the source already has.
+        paths = paths_from_point_chains(segments, gray.shape)
+        drawing = Drawing(paths=paths, aspect_ratio=image.shape[1] / image.shape[0])
+        drawing = drawing.simplify(self.polyline_epsilon / max(gray.shape[:2]))
 
         working_dimension = max(gray.shape[:2])
-        min_extent = derive_kernel_size(working_dimension, fraction=0.012, min_value=3, odd=False)
-        return remove_short_strokes(canvas, min_extent=min_extent)
+        min_length = derive_kernel_size(working_dimension, fraction=0.012, min_value=3, odd=False)
+        min_length_normalized = min_length / working_dimension
+        drawing = drawing.filter(lambda p: p.length >= min_length_normalized)
+
+        if debug is not None:
+            debug.save("redraw", rasterize(drawing, long_side_px=working_dimension))
+        return drawing

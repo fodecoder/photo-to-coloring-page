@@ -17,14 +17,19 @@ dependencies = [
     "opencv-contrib-python>=4.8,<6",
     "numpy>=1.24,<3",
     "Pillow>=10.0,<12",
+    # BSD-licensed, pure-Python vector PDF writer -- used by
+    # coloring_page.render.to_pdf for true vector (not rasterized-image)
+    # PDF export, handling PDF object/stream/xref bookkeeping this project
+    # doesn't otherwise need to reimplement.
+    "reportlab>=4.0,<5",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
-    "pytest-cov>=5.0",
-    "ruff>=0.6",
-    "mypy>=1.10",
+    "pytest>=8.0,<9",
+    "pytest-cov>=5.0,<7",
+    "ruff>=0.6,<0.9",
+    "mypy>=1.10,<2",
 ]
 ml = [
     # Enables the optional `anime2sketch` and `informative_drawings`
@@ -35,10 +40,42 @@ ml = [
     # README's "Extending with an ML engine" section. See engines/base.py
     # and the add-conversion-style skill for how to wire up further new
     # engines.
-    "torch>=2.0",
+    "torch>=2.0,<3",
     # Used by scripts/fetch_weights.py to automate downloading Informative
     # Drawings weights from the lllyasviel/Annotators Hugging Face mirror.
-    "huggingface_hub>=0.20",
+    "huggingface_hub>=0.20,<1",
+]
+seg = [
+    # Enables the SAM 2 region-partition spike (scripts/spike_segmentation.py),
+    # which validates whether segmentation beats gradient-based line
+    # extraction before committing to a pipeline rewrite -- see
+    # docs/DIAGNOSIS.md. `sam2` pulls in its own torch; huggingface_hub is
+    # shared with the `ml` extra above and used by fetch_weights.py to
+    # download the SAM 2.1 Hiera-small checkpoint.
+    "sam2>=1.0,<2",
+    "huggingface_hub>=0.20,<1",
+    # scripts/spike_segmentation.py uses scipy.ndimage's distance transform
+    # to fill pixels no SAM mask covers with their nearest labeled neighbor.
+    "scipy>=1.10,<2",
+]
+lineart = [
+    # Enables the `lineart` engine (src/coloring_page/engines/lineart.py),
+    # the production engine the `seg` extra's spike validates the
+    # approach for. A separate extra from `ml`/`seg` (rather than reusing
+    # either) since this is the first engine needing SAM 2 *and* a
+    # detail-line network *and* scipy's Hausdorff distance together, and
+    # existing `ml`/`seg` consumers shouldn't be forced to pull in
+    # controlnet_aux just to keep using anime2sketch/informative_drawings
+    # or the segmentation spike.
+    "torch>=2.0,<3",
+    "sam2>=1.0,<2",
+    # Provides the `lineart_anime` detail-line preprocessor (Stage B) --
+    # see THIRD_PARTY_LICENSES.md for its checkpoint's license.
+    "controlnet_aux>=0.0.7,<0.1",
+    "huggingface_hub>=0.20,<1",
+    # scipy.spatial.distance.directed_hausdorff powers Stage D's
+    # boundary/detail duplicate-path removal (_drop_hausdorff_duplicates).
+    "scipy>=1.10,<2",
 ]
 
 [project.scripts]
@@ -62,3 +99,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Lets tests/scripts/test_metrics.py import scripts/metrics.py the same way
+# scripts/compare.py itself does (a same-directory `from metrics import
+# ...`), without turning scripts/ into a package.
+pythonpath = ["scripts"]

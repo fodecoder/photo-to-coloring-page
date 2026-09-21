@@ -11,8 +11,6 @@ from coloring_page.postprocess import (
     hysteresis_threshold,
     normalize_percentile,
     prune_short_branches,
-    redraw_centerline,
-    soft_map_to_line_art,
 )
 
 
@@ -135,50 +133,3 @@ def test_hysteresis_centerline_collapses_a_solid_stroke_to_one_row(width: int) -
 
     ink_rows = np.nonzero(np.any(centerline[:, 20:100] > 0, axis=1))[0]
     assert len(ink_rows) == 1
-
-
-def test_redraw_centerline_produces_project_convention_output() -> None:
-    centerline = np.zeros((30, 30), dtype=np.uint8)
-    centerline[15, 5:25] = 255
-
-    result = redraw_centerline(centerline)
-
-    assert result.shape == centerline.shape
-    assert result.dtype == np.uint8
-    # Project convention: 255 = background, lower = ink; a straight line
-    # of centerline pixels should redraw as ink somewhere along row 15.
-    assert np.any(result[15, :] < 128)
-    assert np.mean(result) > 200  # mostly background
-
-
-def test_redraw_centerline_on_blank_input_is_all_background() -> None:
-    centerline = np.zeros((20, 20), dtype=np.uint8)
-    result = redraw_centerline(centerline)
-    assert np.all(result == 255)
-
-
-@pytest.mark.parametrize("strategy", ["hysteresis", "nms"])
-def test_soft_map_to_line_art_collapses_wide_blob(strategy: str) -> None:
-    gray = _make_wide_blob(width=12)
-
-    result = soft_map_to_line_art(gray, strategy=strategy)
-
-    assert result.shape == gray.shape
-    assert result.dtype == np.uint8
-    # The wide blob should become a thin line, not stay a solid block:
-    # far less than the original blob's ink coverage should survive.
-    original_ink_fraction = np.mean(gray < 128)
-    result_ink_fraction = np.mean(result < 128)
-    assert result_ink_fraction < original_ink_fraction * 0.5
-
-
-def test_soft_map_to_line_art_rejects_unknown_strategy() -> None:
-    gray = _make_wide_blob()
-    with pytest.raises(ValueError, match="Unknown strategy"):
-        soft_map_to_line_art(gray, strategy="bogus")  # type: ignore[arg-type]
-
-
-def test_soft_map_to_line_art_on_blank_input_is_all_background() -> None:
-    gray = np.full((30, 30), 240, dtype=np.uint8)
-    result = soft_map_to_line_art(gray)
-    assert np.all(result == 255)

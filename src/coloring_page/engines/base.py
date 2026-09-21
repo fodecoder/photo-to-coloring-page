@@ -12,6 +12,8 @@ from typing import Protocol
 
 import numpy as np
 
+from coloring_page.drawing import Drawing
+
 
 class DebugSink(Protocol):
     """Receives an engine's intermediate stages for inspection.
@@ -33,30 +35,39 @@ class ConversionEngine(ABC):
     """Base class for algorithms that turn a photo into line art.
 
     Implementations receive a BGR image (as loaded by OpenCV) and must
-    return a single-channel (grayscale) image of the same height and
-    width, where dark pixels are lines and light pixels are the paper
-    background. Keeping this contract narrow is what lets the CLI treat
+    return a :class:`~coloring_page.drawing.Drawing`: a normalized vector
+    representation of the traced line art, decoupled from any particular
+    raster resolution -- see :mod:`coloring_page.drawing` for the full
+    contract. Keeping this contract narrow is what lets the CLI treat
     every engine identically regardless of the technique behind it.
     """
 
     #: Short, CLI-facing identifier for this engine (e.g. "canny").
     name: str
 
+    #: Whether this engine is a superseded baseline kept only for
+    #: comparison, not a candidate default. Experimental engines are
+    #: hidden from ``--help`` unless ``--show-experimental`` is passed,
+    #: but remain fully usable via ``--style <name>``.
+    experimental: bool = False
+
+    #: True for engines that hold a model resident in (V)RAM across
+    #: calls. Batch conversion (:mod:`coloring_page.batch`) would
+    #: otherwise instantiate one such engine per worker process under
+    #: ``ProcessPoolExecutor``, multiplying VRAM/RAM use and risking OOM
+    #: on a single GPU; batch execution forces ``jobs=1`` for these
+    #: regardless of the requested job count.
+    requires_serial_execution: bool = False
+
     @abstractmethod
-    def convert(
-        self, image: np.ndarray, *, line_thickness: int = 1, debug: DebugSink | None = None
-    ) -> np.ndarray:
-        """Convert a BGR photo into a grayscale coloring-page line drawing.
+    def convert(self, image: np.ndarray, *, debug: DebugSink | None = None) -> Drawing:
+        """Convert a BGR photo into vector coloring-page line art.
 
         Parameters
         ----------
         image : np.ndarray
             Input image in BGR order with shape ``(H, W, 3)`` and dtype
             ``uint8``, as returned by ``cv2.imread``.
-        line_thickness : int, optional
-            Approximate line thickness in pixels, by default ``1``. Engines
-            should use this to dilate/scale their detected edges so results
-            stay comparable across styles.
         debug : DebugSink | None, optional
             When given, engines with multiple internal stages (a
             flatten/filter step, an edge map, a redraw pass, ...) may call
@@ -70,9 +81,8 @@ class ConversionEngine(ABC):
 
         Returns
         -------
-        np.ndarray
-            Single-channel image with shape ``(H, W)`` and dtype ``uint8``,
-            where ``255`` is background (white paper) and lower values are
-            line art, suitable for printing.
+        Drawing
+            Normalized vector line art, decoupled from any raster
+            resolution -- see :mod:`coloring_page.drawing`.
         """
         raise NotImplementedError

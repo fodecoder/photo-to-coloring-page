@@ -5,8 +5,9 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from coloring_page.drawing import Drawing, paths_from_mask
 from coloring_page.engines.base import ConversionEngine, DebugSink
-from coloring_page.pipeline import remove_short_strokes, smooth_preserving_edges
+from coloring_page.pipeline import smooth_preserving_edges
 
 
 class AdaptiveEngine(ConversionEngine):
@@ -24,6 +25,7 @@ class AdaptiveEngine(ConversionEngine):
     """
 
     name = "adaptive"
+    experimental = True
 
     def __init__(self, block_size: int = 9, c: int = 2) -> None:
         """Store the adaptive-threshold neighborhood size and constant.
@@ -41,10 +43,8 @@ class AdaptiveEngine(ConversionEngine):
         self.block_size = block_size if block_size % 2 == 1 else block_size + 1
         self.c = c
 
-    def convert(
-        self, image: np.ndarray, *, line_thickness: int = 1, debug: DebugSink | None = None
-    ) -> np.ndarray:
-        """Blur then adaptively threshold the image into line art.
+    def convert(self, image: np.ndarray, *, debug: DebugSink | None = None) -> Drawing:
+        """Blur then adaptively threshold the image into vector line art.
 
         See Also
         --------
@@ -62,12 +62,12 @@ class AdaptiveEngine(ConversionEngine):
         )
         if debug is not None:
             debug.save("thresholded", lines)
-        lines = remove_short_strokes(lines)
 
-        if line_thickness > 1:
-            kernel = np.ones((line_thickness, line_thickness), np.uint8)
-            # Lines are dark on a light background here, so eroding
-            # (rather than dilating) grows the dark strokes.
-            lines = cv2.erode(lines, kernel, iterations=1)
-
-        return lines
+        # adaptiveThreshold's own convention is ink=0/background=255 --
+        # the opposite of paths_from_mask's nonzero=ink contract.
+        ink_mask = cv2.bitwise_not(lines)
+        paths = paths_from_mask(ink_mask)
+        working_dimension = max(gray.shape[:2])
+        min_length_normalized = 4 / working_dimension
+        drawing = Drawing(paths=paths, aspect_ratio=image.shape[1] / image.shape[0])
+        return drawing.filter(lambda p: p.length >= min_length_normalized)

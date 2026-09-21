@@ -5,6 +5,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from coloring_page.drawing import rasterize
 from coloring_page.engines.region import (
     RegionEngine,
     _label_boundaries,
@@ -14,7 +15,11 @@ from coloring_page.engines.region import (
     segment_mean_shift,
     segment_superpixels,
 )
-from coloring_page.metrics import ink_coverage
+from coloring_page.validate import ink_coverage
+
+
+def test_requires_serial_execution_is_false() -> None:
+    assert RegionEngine.requires_serial_execution is False
 
 
 def _make_two_color_blocks() -> np.ndarray:
@@ -92,17 +97,18 @@ def test_segment_superpixels_produces_multiple_labels() -> None:
     assert len(np.unique(labels)) > 1
 
 
-def test_output_shape_and_dtype(synthetic_photo: np.ndarray) -> None:
+def test_output_is_a_nonempty_drawing(synthetic_photo: np.ndarray) -> None:
     engine = RegionEngine()
-    result = engine.convert(synthetic_photo)
+    drawing = engine.convert(synthetic_photo)
 
-    assert result.shape == synthetic_photo.shape[:2]
-    assert result.dtype == np.uint8
+    assert len(drawing.paths) > 0
+    assert drawing.aspect_ratio == synthetic_photo.shape[1] / synthetic_photo.shape[0]
 
 
 def test_output_has_light_background(synthetic_photo: np.ndarray) -> None:
     engine = RegionEngine()
-    result = engine.convert(synthetic_photo)
+    drawing = engine.convert(synthetic_photo)
+    result = rasterize(drawing, long_side_px=max(synthetic_photo.shape[:2]))
 
     assert np.mean(result) > 127
 
@@ -111,31 +117,34 @@ def test_ink_coverage_in_reasonable_band(synthetic_photo: np.ndarray) -> None:
     # Regression band, not a tuning target: catches a total-failure
     # collapse (no surviving boundaries, or everything redrawn as ink).
     engine = RegionEngine()
-    result = engine.convert(synthetic_photo)
+    drawing = engine.convert(synthetic_photo)
+    result = rasterize(drawing, long_side_px=max(synthetic_photo.shape[:2]))
 
     assert 0.001 <= ink_coverage(result) <= 0.40
 
 
 def test_higher_thickness_adds_more_ink(synthetic_photo: np.ndarray) -> None:
     engine = RegionEngine()
-    thin = engine.convert(synthetic_photo, line_thickness=1)
-    thick = engine.convert(synthetic_photo, line_thickness=3)
+    drawing = engine.convert(synthetic_photo)
+    long_side = max(synthetic_photo.shape[:2])
+    thin = rasterize(drawing, long_side_px=long_side, line_thickness=1)
+    thick = rasterize(drawing, long_side_px=long_side, line_thickness=3)
 
     assert np.sum(thick < 128) >= np.sum(thin < 128)
 
 
 def test_superpixel_segmentation_runs_end_to_end(synthetic_photo: np.ndarray) -> None:
     engine = RegionEngine(segmentation="seeds")
-    result = engine.convert(synthetic_photo)
+    drawing = engine.convert(synthetic_photo)
 
-    assert result.shape == synthetic_photo.shape[:2]
+    assert len(drawing.paths) > 0
 
 
 def test_gradient_boundary_detection_runs_end_to_end(synthetic_photo: np.ndarray) -> None:
     engine = RegionEngine(boundary_detection="gradient")
-    result = engine.convert(synthetic_photo)
+    drawing = engine.convert(synthetic_photo)
 
-    assert result.shape == synthetic_photo.shape[:2]
+    assert len(drawing.paths) > 0
 
 
 def test_unknown_boundary_detection_rejected(synthetic_photo: np.ndarray) -> None:
@@ -150,7 +159,7 @@ def test_min_contrast_affects_output(synthetic_photo: np.ndarray) -> None:
     permissive = RegionEngine(min_contrast=0.0).convert(synthetic_photo)
     strict = RegionEngine(min_contrast=100.0).convert(synthetic_photo)
 
-    assert not np.array_equal(permissive, strict)
+    assert len(permissive.paths) != len(strict.paths)
 
 
 class _RecordingDebugSink:

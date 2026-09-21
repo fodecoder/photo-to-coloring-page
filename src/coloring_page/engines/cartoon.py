@@ -5,8 +5,8 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from coloring_page.drawing import Drawing, paths_from_mask
 from coloring_page.engines.base import ConversionEngine, DebugSink
-from coloring_page.pipeline import remove_short_strokes
 
 
 class CartoonEngine(ConversionEngine):
@@ -32,6 +32,7 @@ class CartoonEngine(ConversionEngine):
     """
 
     name = "cartoon"
+    experimental = True
 
     def __init__(
         self, spatial_radius: int = 25, color_radius: int = 48, min_region_extent: int = 6
@@ -51,18 +52,16 @@ class CartoonEngine(ConversionEngine):
             further reducing gradient/texture noise but also erasing
             subtler color boundaries.
         min_region_extent : int, optional
-            Minimum bounding-box extent (in pixels) for a boundary
-            fragment to survive cleanup, by default 6. Passed through to
-            :func:`coloring_page.pipeline.remove_short_strokes`.
+            Minimum path length (in pixels, at whatever resolution
+            :meth:`convert` receives) for a traced boundary to survive
+            cleanup, by default 6.
         """
         self.spatial_radius = spatial_radius
         self.color_radius = color_radius
         self.min_region_extent = min_region_extent
 
-    def convert(
-        self, image: np.ndarray, *, line_thickness: int = 1, debug: DebugSink | None = None
-    ) -> np.ndarray:
-        """Segment the image into flat regions and outline their boundaries.
+    def convert(self, image: np.ndarray, *, debug: DebugSink | None = None) -> Drawing:
+        """Segment the image into flat regions and trace their boundaries as vector paths.
 
         See Also
         --------
@@ -81,9 +80,8 @@ class CartoonEngine(ConversionEngine):
         gradient = cv2.morphologyEx(gray_segmented, cv2.MORPH_GRADIENT, kernel)
         _, edges = cv2.threshold(gradient, 10, 255, cv2.THRESH_BINARY)
 
-        if line_thickness > 1:
-            thick_kernel = np.ones((line_thickness, line_thickness), np.uint8)
-            edges = cv2.dilate(edges, thick_kernel, iterations=1)
-
-        lines = cv2.bitwise_not(edges)
-        return remove_short_strokes(lines, min_extent=self.min_region_extent)
+        paths = paths_from_mask(edges)
+        working_dimension = max(image.shape[:2])
+        min_length_normalized = self.min_region_extent / working_dimension
+        drawing = Drawing(paths=paths, aspect_ratio=image.shape[1] / image.shape[0])
+        return drawing.filter(lambda p: p.length >= min_length_normalized)

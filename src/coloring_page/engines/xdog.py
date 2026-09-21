@@ -5,11 +5,11 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from coloring_page.drawing import Drawing, paths_from_mask
 from coloring_page.engines.base import ConversionEngine, DebugSink
 from coloring_page.pipeline import (
     DEFAULT_WORKING_DIMENSION,
     derive_kernel_size,
-    remove_short_strokes,
     smooth_preserving_edges,
 )
 
@@ -25,6 +25,7 @@ class XDoGEngine(ConversionEngine):
     """
 
     name = "xdog"
+    experimental = True
 
     def __init__(
         self,
@@ -77,10 +78,8 @@ class XDoGEngine(ConversionEngine):
         self.epsilon = epsilon
         self.phi = phi
 
-    def convert(
-        self, image: np.ndarray, *, line_thickness: int = 1, debug: DebugSink | None = None
-    ) -> np.ndarray:
-        """Compute an extended difference-of-Gaussians edge map.
+    def convert(self, image: np.ndarray, *, debug: DebugSink | None = None) -> Drawing:
+        """Compute an extended difference-of-Gaussians edge map, traced into vector paths.
 
         See Also
         --------
@@ -115,11 +114,12 @@ class XDoGEngine(ConversionEngine):
         lines = (xdog * 255).astype(np.uint8)
         if debug is not None:
             debug.save("thresholded", lines)
-        min_extent = derive_kernel_size(working_dimension, fraction=0.012, min_value=3, odd=False)
-        lines = remove_short_strokes(lines, min_extent=min_extent)
 
-        if line_thickness > 1:
-            kernel = np.ones((line_thickness, line_thickness), np.uint8)
-            lines = cv2.erode(lines, kernel, iterations=1).astype(np.uint8)
-
-        return lines
+        # This near-binary output's convention is already ink=dark/
+        # background=255, opposite of paths_from_mask's nonzero=ink.
+        ink_mask = cv2.bitwise_not(lines)
+        paths = paths_from_mask(ink_mask)
+        min_length = derive_kernel_size(working_dimension, fraction=0.012, min_value=3, odd=False)
+        min_length_normalized = min_length / working_dimension
+        drawing = Drawing(paths=paths, aspect_ratio=image.shape[1] / image.shape[0])
+        return drawing.filter(lambda p: p.length >= min_length_normalized)

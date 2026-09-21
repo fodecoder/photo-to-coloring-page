@@ -10,10 +10,11 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from coloring_page.drawing import Drawing, paths_from_point_chains, rasterize
 from coloring_page.engines.base import ConversionEngine, DebugSink
 from coloring_page.engines.chained import detect_edge_chains
 from coloring_page.engines.informative_drawings import InformativeDrawingsEngine
-from coloring_page.pipeline import derive_kernel_size, remove_short_strokes
+from coloring_page.pipeline import derive_kernel_size
 from coloring_page.postprocess import normalize_percentile, redraw_segments
 
 
@@ -54,6 +55,7 @@ class GatedEngine(ConversionEngine):
     """
 
     name = "gated"
+    requires_serial_execution = True
 
     def __init__(
         self,
@@ -161,10 +163,8 @@ class GatedEngine(ConversionEngine):
             return 0.0
         return float(255 - sampled.mean())
 
-    def convert(
-        self, image: np.ndarray, *, line_thickness: int = 1, debug: DebugSink | None = None
-    ) -> np.ndarray:
-        """Detect edge chains, gate them by network confidence, then redraw survivors.
+    def convert(self, image: np.ndarray, *, debug: DebugSink | None = None) -> Drawing:
+        """Detect edge chains, gate them by network confidence, then trace survivors.
 
         See Also
         --------
@@ -199,15 +199,15 @@ class GatedEngine(ConversionEngine):
             )
             debug.save("gated_chains", gated_map)
 
-        canvas = redraw_segments(
-            kept_segments,
-            gray.shape,
-            polyline_epsilon=self.polyline_epsilon,
-            line_thickness=line_thickness,
-        )
-        if debug is not None:
-            debug.save("redraw", canvas)
+        paths = paths_from_point_chains(kept_segments, gray.shape)
+        drawing = Drawing(paths=paths, aspect_ratio=image.shape[1] / image.shape[0])
+        drawing = drawing.simplify(self.polyline_epsilon / max(gray.shape[:2]))
 
         working_dimension = max(gray.shape[:2])
-        min_extent = derive_kernel_size(working_dimension, fraction=0.012, min_value=3, odd=False)
-        return remove_short_strokes(canvas, min_extent=min_extent)
+        min_length = derive_kernel_size(working_dimension, fraction=0.012, min_value=3, odd=False)
+        min_length_normalized = min_length / working_dimension
+        drawing = drawing.filter(lambda p: p.length >= min_length_normalized)
+
+        if debug is not None:
+            debug.save("redraw", rasterize(drawing, long_side_px=working_dimension))
+        return drawing

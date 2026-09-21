@@ -5,20 +5,26 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from coloring_page.drawing import rasterize
 from coloring_page.engines.cartoon import CartoonEngine
 
 
-def test_output_shape_and_dtype(synthetic_photo: np.ndarray) -> None:
-    engine = CartoonEngine()
-    result = engine.convert(synthetic_photo)
+def test_requires_serial_execution_is_false() -> None:
+    assert CartoonEngine.requires_serial_execution is False
 
-    assert result.shape == synthetic_photo.shape[:2]
-    assert result.dtype == np.uint8
+
+def test_output_is_a_nonempty_drawing(synthetic_photo: np.ndarray) -> None:
+    engine = CartoonEngine()
+    drawing = engine.convert(synthetic_photo)
+
+    assert len(drawing.paths) > 0
+    assert drawing.aspect_ratio == synthetic_photo.shape[1] / synthetic_photo.shape[0]
 
 
 def test_output_has_light_background(synthetic_photo: np.ndarray) -> None:
     engine = CartoonEngine()
-    result = engine.convert(synthetic_photo)
+    drawing = engine.convert(synthetic_photo)
+    result = rasterize(drawing, long_side_px=max(synthetic_photo.shape[:2]))
 
     # The synthetic photo is mostly flat/gradient area with a couple of
     # shapes; quantized-region boundaries should stay a minority of pixels.
@@ -29,8 +35,9 @@ def test_isolated_noise_is_cleaned_up(
     synthetic_photo: np.ndarray, noisy_synthetic_photo: np.ndarray
 ) -> None:
     engine = CartoonEngine()
-    clean_result = engine.convert(synthetic_photo)
-    noisy_result = engine.convert(noisy_synthetic_photo)
+    long_side = max(synthetic_photo.shape[:2])
+    clean_result = rasterize(engine.convert(synthetic_photo), long_side_px=long_side)
+    noisy_result = rasterize(engine.convert(noisy_synthetic_photo), long_side_px=long_side)
 
     def count_small_components(binary: np.ndarray, max_area: int = 3) -> int:
         ink_mask = (binary < 128).astype(np.uint8)
@@ -46,4 +53,4 @@ def test_segmentation_parameters_affect_output(synthetic_photo: np.ndarray) -> N
     detailed = CartoonEngine(spatial_radius=5, color_radius=15).convert(synthetic_photo)
     coarse = CartoonEngine(spatial_radius=40, color_radius=80).convert(synthetic_photo)
 
-    assert not np.array_equal(detailed, coarse)
+    assert len(detailed.paths) != len(coarse.paths)

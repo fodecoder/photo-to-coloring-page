@@ -5,8 +5,9 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from coloring_page.drawing import Drawing, paths_from_mask
 from coloring_page.engines.base import ConversionEngine, DebugSink
-from coloring_page.pipeline import derive_kernel_size, remove_short_strokes, smooth_preserving_edges
+from coloring_page.pipeline import derive_kernel_size, smooth_preserving_edges
 
 
 class CannyEngine(ConversionEngine):
@@ -19,6 +20,7 @@ class CannyEngine(ConversionEngine):
     """
 
     name = "canny"
+    experimental = True
 
     def __init__(self, low_threshold: int | None = None, high_threshold: int | None = None) -> None:
         """Store the Canny hysteresis thresholds used on every conversion.
@@ -38,10 +40,8 @@ class CannyEngine(ConversionEngine):
         self.low_threshold = low_threshold
         self.high_threshold = high_threshold
 
-    def convert(
-        self, image: np.ndarray, *, line_thickness: int = 1, debug: DebugSink | None = None
-    ) -> np.ndarray:
-        """Detect edges with Canny and render them as black lines on white.
+    def convert(self, image: np.ndarray, *, debug: DebugSink | None = None) -> Drawing:
+        """Detect edges with Canny and trace them into vector paths.
 
         See Also
         --------
@@ -83,12 +83,11 @@ class CannyEngine(ConversionEngine):
         close_kernel = np.ones((close_size, close_size), np.uint8)
         edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, close_kernel)
 
-        if line_thickness > 1:
-            kernel = np.ones((line_thickness, line_thickness), np.uint8)
-            edges = cv2.dilate(edges, kernel, iterations=1)
-
-        # Canny returns white edges on black; coloring pages need the
-        # opposite (black lines on a white, printable background).
-        lines = cv2.bitwise_not(edges)
-        min_extent = derive_kernel_size(working_dimension, fraction=0.012, min_value=3, odd=False)
-        return remove_short_strokes(lines, min_extent=min_extent)
+        # Canny's own output is already ink=nonzero, matching
+        # paths_from_mask's expected polarity -- no inversion needed here,
+        # unlike the final raster convention this engine used to return.
+        paths = paths_from_mask(edges)
+        min_length = derive_kernel_size(working_dimension, fraction=0.012, min_value=3, odd=False)
+        min_length_normalized = min_length / working_dimension
+        drawing = Drawing(paths=paths, aspect_ratio=image.shape[1] / image.shape[0])
+        return drawing.filter(lambda p: p.length >= min_length_normalized)

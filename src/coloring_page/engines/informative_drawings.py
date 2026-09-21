@@ -15,7 +15,6 @@ clean, geometry-preserving line drawing this project targets.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Literal, cast
 
@@ -23,42 +22,40 @@ import cv2
 import numpy as np
 import torch
 
+from coloring_page.drawing import Drawing, paths_from_mask
 from coloring_page.engines._informative_drawings_arch import Generator, build_generator
 from coloring_page.engines.base import ConversionEngine, DebugSink
-from coloring_page.postprocess import soft_map_to_line_art
+from coloring_page.exceptions import WeightsMissingError
+from coloring_page.postprocess import gradient_edges, hysteresis_centerline, normalize_percentile
+from coloring_page.weights import resolve_weights_path, verify_checksum
 
 #: Environment variable used to point at a local weights file, in place of
-#: the default lookup locations below.
+#: the default lookup locations below. Deprecated in favor of the shared
+#: ``COLORING_PAGE_WEIGHTS_DIR`` (see coloring_page.weights), kept as a
+#: higher-priority override since it's the only way to select between the
+#: two available checkpoints (``sk_model.pth``/``sk_model2.pth``, both
+#: saved locally as ``informative_drawings.pth``).
 WEIGHTS_ENV_VAR = "COLORING_PAGE_INFORMATIVE_DRAWINGS_WEIGHTS"
 
-#: Where weights are looked for when neither a constructor argument nor
-#: WEIGHTS_ENV_VAR is set: a `weights/` folder relative to the current
-#: working directory first, then a per-user cache directory.
-DEFAULT_WEIGHTS_PATH = Path.home() / ".cache" / "coloring_page" / "informative_drawings.pth"
-_LOCAL_WEIGHTS_PATH = Path("weights") / "informative_drawings.pth"
+#: Checkpoint filename within the resolved weights directory.
+_WEIGHTS_FILENAME = "informative_drawings.pth"
+
+#: Where weights are looked for when neither a constructor argument, an
+#: env var, nor ``COLORING_PAGE_WEIGHTS_DIR`` is set: a `weights/` folder
+#: relative to the current working directory first, then the per-user
+#: cache directory.
+DEFAULT_WEIGHTS_PATH = Path.home() / ".cache" / "coloring_page" / _WEIGHTS_FILENAME
+_LOCAL_WEIGHTS_PATH = Path("weights") / _WEIGHTS_FILENAME
 
 
 def _resolve_weights_path(explicit_path: str | Path | None) -> Path:
-    """Pick the weights file to use, in priority order.
-
-    Priority: an explicit path (constructor argument) >
-    ``COLORING_PAGE_INFORMATIVE_DRAWINGS_WEIGHTS`` > an existing
-    ``./weights/informative_drawings.pth`` relative to the current
-    working directory > the per-user cache directory (used as the final
-    fallback even if it doesn't exist yet, so callers get a consistent
-    "expected" path to report in error messages).
-    """
-    if explicit_path is not None:
-        return Path(explicit_path)
-
-    env_path = os.environ.get(WEIGHTS_ENV_VAR)
-    if env_path:
-        return Path(env_path)
-
-    if _LOCAL_WEIGHTS_PATH.exists():
-        return _LOCAL_WEIGHTS_PATH
-
-    return DEFAULT_WEIGHTS_PATH
+    """Pick the weights file to use -- see ``coloring_page.weights.resolve_weights_path``."""
+    return resolve_weights_path(
+        _WEIGHTS_FILENAME,
+        explicit_path=explicit_path,
+        legacy_env_var=WEIGHTS_ENV_VAR,
+        local_path=_LOCAL_WEIGHTS_PATH,
+    )
 
 
 def _resize_short_side(image: np.ndarray, resolution: int, *, multiple: int = 64) -> np.ndarray:
@@ -145,6 +142,7 @@ class InformativeDrawingsEngine(ConversionEngine):
     """
 
     name = "informative_drawings"
+    requires_serial_execution = True
 
     def __init__(
         self,
@@ -179,11 +177,10 @@ class InformativeDrawingsEngine(ConversionEngine):
             preprocessing this mirrors -- not ``load_size``, since it no
             longer targets a square.
         postprocess_strategy : {"nms", "hysteresis"}, optional
-            Centerline-extraction strategy passed to
-            :func:`~coloring_page.postprocess.soft_map_to_line_art`, by
-            default ``"hysteresis"``, matching that function's own
-            default. This is a forced override, not a re-validated
-            choice: measured with ``scripts/compare.py`` at
+            Centerline-extraction strategy applied to the network's soft
+            output before tracing it into vector paths, by default
+            ``"hysteresis"``. This is a forced override, not a
+            re-validated choice: measured with ``scripts/compare.py`` at
             ``detect_resolution=1024``, ``"nms"``
             (:func:`~coloring_page.postprocess.gradient_edges`) still ties
             or wins on ``f1_normalized`` on all 3 reference pairs (0.500
@@ -192,10 +189,10 @@ class InformativeDrawingsEngine(ConversionEngine):
             every stroke into its two edges (see ``gradient_edges``'s
             docstring) inflates ink coverage without leaving the
             admissibility band. The default is set to ``"hysteresis"``
-            anyway, for consistency with ``soft_map_to_line_art`` and
-            because a doubled-edge output is not a centerline regardless
-            of what it scores. Pass ``postprocess_strategy="nms"``
-            explicitly to restore the higher-scoring behavior. Revisit if
+            anyway, because a doubled-edge output is not a centerline
+            regardless of what it scores. Pass
+            ``postprocess_strategy="nms"`` explicitly to restore the
+            higher-scoring behavior. Revisit if
             ``hysteresis_centerline``'s thresholds are retuned for this
             network's output, or a sharper soft map becomes available.
         """
@@ -210,9 +207,13 @@ class InformativeDrawingsEngine(ConversionEngine):
 
         Raises
         ------
-        FileNotFoundError
+        WeightsMissingError
             If no weights file exists at ``self.weights_path``, with
             instructions for obtaining one.
+        WeightsChecksumError
+            If the weights file exists but doesn't match its pinned
+            SHA256 (only checked for filenames known to
+            ``coloring_page.weights.CHECKSUMS``).
         RuntimeError
             If the checkpoint at ``self.weights_path`` doesn't match the
             generator architecture (e.g. wrong ``n_residual_blocks``),
@@ -222,7 +223,8 @@ class InformativeDrawingsEngine(ConversionEngine):
             return self._model
 
         if not self.weights_path.exists():
-            raise FileNotFoundError(_WEIGHTS_HELP.format(path=self.weights_path))
+            raise WeightsMissingError(_WEIGHTS_HELP.format(path=self.weights_path))
+        verify_checksum(self.weights_path, _WEIGHTS_FILENAME)
 
         model = build_generator(self.n_residual_blocks)
         checkpoint = torch.load(self.weights_path, map_location="cpu")
@@ -289,7 +291,7 @@ class InformativeDrawingsEngine(ConversionEngine):
         :class:`~coloring_page.engines.gated.GatedEngine`, which uses this
         network's confidence as a semantic filter rather than a
         line-art source in its own right) can get the raw signal without
-        going through :func:`~coloring_page.postprocess.soft_map_to_line_art`.
+        going through the binarize/trace steps :meth:`convert` applies.
 
         Parameters
         ----------
@@ -309,20 +311,20 @@ class InformativeDrawingsEngine(ConversionEngine):
         )
         return upscaled
 
-    def convert(
-        self, image: np.ndarray, *, line_thickness: int = 1, debug: DebugSink | None = None
-    ) -> np.ndarray:
-        """Run the pretrained network and render its output as line art.
+    def convert(self, image: np.ndarray, *, debug: DebugSink | None = None) -> Drawing:
+        """Run the pretrained network and trace its output into vector line art.
 
-        Binarizes and redraws the network's soft output at its own
-        working resolution, then resizes the *finished* line art back to
-        ``image``'s size -- not the other way around. Upscaling the raw
-        soft map first (this engine's previous behavior) turns each
+        Binarizes and traces the network's soft output at its own working
+        resolution -- unlike this engine's pre-vector behavior, there is
+        no final raster resize back to ``image``'s size, since a
+        ``Drawing``'s normalized coordinates already represent the
+        traced geometry independent of any pixel resolution. Upscaling
+        the raw soft map first (an even earlier behavior) turned each
         network-resolution stroke into a several-pixel-wide blur before
-        it's ever thresholded, which is what made a clean centerline
+        it was ever thresholded, which is what made a clean centerline
         extraction (:func:`~coloring_page.postprocess.hysteresis_centerline`)
-        impossible; resizing the already-thin, already-redrawn geometry
-        instead preserves it.
+        impossible; tracing at the network's own sharper resolution avoids
+        that regardless of what resolution the result is later rendered at.
 
         See Also
         --------
@@ -332,12 +334,17 @@ class InformativeDrawingsEngine(ConversionEngine):
         if debug is not None:
             debug.save("raw_sketch", sketch)
 
-        line_art = soft_map_to_line_art(
-            sketch, strategy=self.postprocess_strategy, line_thickness=line_thickness
-        )
-        original_height, original_width = image.shape[:2]
-        if line_art.shape[:2] != (original_height, original_width):
-            line_art = cv2.resize(
-                line_art, (original_width, original_height), interpolation=cv2.INTER_LINEAR
+        normalized = normalize_percentile(sketch)
+        if self.postprocess_strategy == "hysteresis":
+            centerline = hysteresis_centerline(normalized)
+        elif self.postprocess_strategy == "nms":
+            centerline = gradient_edges(normalized)
+        else:
+            raise ValueError(
+                f"Unknown postprocess_strategy {self.postprocess_strategy!r}; "
+                "expected 'nms' or 'hysteresis'."
             )
-        return line_art
+
+        paths = paths_from_mask(centerline, kind="detail")
+        network_height, network_width = sketch.shape[:2]
+        return Drawing(paths=paths, aspect_ratio=network_width / network_height)

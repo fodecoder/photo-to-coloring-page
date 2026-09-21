@@ -5,9 +5,8 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from coloring_page.drawing import Drawing, paths_from_mask, rasterize
 from coloring_page.engines.base import ConversionEngine, DebugSink
-from coloring_page.pipeline import derive_kernel_size, remove_short_strokes
-from coloring_page.postprocess import prune_short_branches
 
 
 class SkeletonRedrawEngine(ConversionEngine):
@@ -25,6 +24,7 @@ class SkeletonRedrawEngine(ConversionEngine):
     """
 
     name = "skeleton"
+    experimental = True
 
     def __init__(
         self,
@@ -69,10 +69,8 @@ class SkeletonRedrawEngine(ConversionEngine):
         self.min_branch_length = min_branch_length
         self.polyline_epsilon = polyline_epsilon
 
-    def convert(
-        self, image: np.ndarray, *, line_thickness: int = 1, debug: DebugSink | None = None
-    ) -> np.ndarray:
-        """Flatten, skeletonize, prune, then redraw as smooth strokes.
+    def convert(self, image: np.ndarray, *, debug: DebugSink | None = None) -> Drawing:
+        """Flatten, then trace the edge map's skeleton into smooth vector paths.
 
         See Also
         --------
@@ -92,26 +90,18 @@ class SkeletonRedrawEngine(ConversionEngine):
         if debug is not None:
             debug.save("edges", edges)
 
-        skeleton = cv2.ximgproc.thinning(edges, thinningType=cv2.ximgproc.THINNING_ZHANGSUEN)
-        pruned = prune_short_branches(skeleton, min_branch_length=self.min_branch_length)
-        if debug is not None:
-            debug.save("skeleton", pruned)
-
-        contours, _ = cv2.findContours(pruned, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        canvas = np.full(gray.shape, 255, dtype=np.uint8)
-        for contour in contours:
-            approx = cv2.approxPolyDP(contour, self.polyline_epsilon, closed=False)
-            cv2.polylines(
-                canvas,
-                [approx],
-                isClosed=False,
-                color=0,
-                thickness=line_thickness,
-                lineType=cv2.LINE_AA,
-            )
-        if debug is not None:
-            debug.save("redraw", canvas)
-
+        # paths_from_mask thins and traces edges' skeleton graph directly
+        # (branch-to-branch, never via cv2.findContours), which is exactly
+        # what this engine used to hand-roll via its own
+        # thinning/prune_short_branches/findContours block -- that block
+        # is now redundant with paths_from_mask and has been removed.
         working_dimension = max(gray.shape[:2])
-        min_extent = derive_kernel_size(working_dimension, fraction=0.018, min_value=3, odd=False)
-        return remove_short_strokes(canvas, min_extent=min_extent)
+        paths = paths_from_mask(edges)
+        drawing = Drawing(paths=paths, aspect_ratio=image.shape[1] / image.shape[0])
+        drawing = drawing.simplify(self.polyline_epsilon / working_dimension)
+        min_length_normalized = self.min_branch_length / working_dimension
+        drawing = drawing.filter(lambda p: p.length >= min_length_normalized)
+
+        if debug is not None:
+            debug.save("redraw", rasterize(drawing, long_side_px=working_dimension))
+        return drawing

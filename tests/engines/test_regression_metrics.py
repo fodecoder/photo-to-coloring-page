@@ -19,8 +19,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from coloring_page.drawing import rasterize
 from coloring_page.engines.registry import ENGINES
-from coloring_page.metrics import ink_coverage
+from coloring_page.validate import ink_coverage
 
 _WEIGHTS_REQUIRED_STYLES = {
     "anime2sketch": Path("weights") / "anime2sketch.pth",
@@ -52,7 +53,8 @@ def test_ink_coverage_in_sanity_band(style: str, synthetic_photo: np.ndarray) ->
         pytest.skip(skip_reason)
 
     engine = ENGINES[style]()
-    result = engine.convert(synthetic_photo)
+    drawing = engine.convert(synthetic_photo)
+    result = rasterize(drawing, long_side_px=max(synthetic_photo.shape[:2]))
 
     coverage = ink_coverage(result)
     assert 0.005 <= coverage <= 0.40, (
@@ -60,3 +62,31 @@ def test_ink_coverage_in_sanity_band(style: str, synthetic_photo: np.ndarray) ->
         "[0.005, 0.40] -- likely a silent total failure (near-blank page "
         "or near-solid ink), not a tuning issue."
     )
+
+
+@pytest.mark.parametrize("style", sorted(ENGINES))
+def test_engine_returns_valid_drawing(style: str, synthetic_photo: np.ndarray) -> None:
+    """Every registered engine must return a well-formed Drawing.
+
+    Complements test_ink_coverage_in_sanity_band above (a raster-quality
+    check): this instead verifies the vector contract itself --
+    non-empty paths, every point normalized to [0, 1], no degenerate
+    (fewer-than-2-point) path -- regardless of what the traced content
+    looks like once rasterized. Unlike that test, this runs on every
+    engine including `gated`: Drawing validity is an unrelated axis from
+    ink-coverage sanity, so `gated`'s legitimate on-tiny-synthetic-input
+    zero-confidence gating doesn't exempt it from this contract check.
+    """
+    skip_reason = _should_skip(style)
+    if skip_reason is not None:
+        pytest.skip(skip_reason)
+
+    engine = ENGINES[style]()
+    drawing = engine.convert(synthetic_photo)
+
+    assert len(drawing.paths) > 0, f"{style} returned a Drawing with no paths."
+    for path in drawing.paths:
+        assert len(path.points) >= 2, f"{style} produced a path with fewer than 2 points."
+        assert np.all(path.points >= 0.0) and np.all(path.points <= 1.0), (
+            f"{style} produced a path with points outside [0, 1]."
+        )

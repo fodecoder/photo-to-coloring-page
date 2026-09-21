@@ -30,7 +30,11 @@ boundary in it. Five explicit stages:
    artifact, not a real object edge) -- the second criterion is the one
    a gradient-based edge detector structurally cannot apply, since it
    has no notion of "region" to compare.
-5. **redraw** -- reuses :func:`~coloring_page.postprocess.redraw_segments`.
+5. **vectorize** -- each surviving contour is wrapped as a
+   :class:`~coloring_page.drawing.Path` via
+   :func:`~coloring_page.drawing.paths_from_point_chains`, carrying the
+   normalized area of its smaller adjacent region as
+   :attr:`~coloring_page.drawing.Path.source_area`.
 
 ``cartoon.py`` already does mean-shift region segmentation in this
 project, but stops at thresholding the segmented image's morphological
@@ -43,14 +47,15 @@ the gradient-based engines despite that.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Literal, cast
 
 import cv2
 import numpy as np
 
+from coloring_page.drawing import Drawing, Path, paths_from_point_chains, rasterize
 from coloring_page.engines.base import ConversionEngine, DebugSink
 from coloring_page.pipeline import derive_kernel_size
-from coloring_page.postprocess import redraw_segments
 
 #: 4-connected neighbor offsets used to find where region labels change.
 _NEIGHBOR_OFFSETS = [(0, 1), (0, -1), (1, 0), (-1, 0)]
@@ -354,6 +359,49 @@ def _mask_to_line_art(mask: np.ndarray) -> np.ndarray:
     return np.where(mask, 0, 255).astype(np.uint8)
 
 
+def _labels_adjacent_to_contour(
+    contour: np.ndarray, labels: np.ndarray, height: int, width: int
+) -> tuple[int, int] | None:
+    """Find two distinct region labels bordering a traced boundary contour.
+
+    Samples a handful of points along ``contour`` and looks at their
+    4-neighbors in ``labels``, stopping as soon as two distinct labels are
+    found -- this is what lets a boundary :class:`~coloring_page.drawing.Path`
+    carry :attr:`~coloring_page.drawing.Path.source_area`, since this
+    engine (unlike the gradient-based ones) already has a per-pixel region
+    label to look up.
+
+    Parameters
+    ----------
+    contour : np.ndarray
+        One contour from ``cv2.findContours``, an ``Nx1x2`` int32 array of
+        ``(x, y)`` points.
+    labels : np.ndarray
+        Integer label image, shape ``(H, W)``.
+    height, width : int
+        ``labels``'s shape, passed separately to avoid recomputing it once
+        per contour.
+
+    Returns
+    -------
+    tuple[int, int] | None
+        Two distinct label ids, or ``None`` if fewer than two were found
+        (e.g. a contour entirely along the image border).
+    """
+    seen: set[int] = set()
+    for x, y in contour.reshape(-1, 2).tolist():
+        for dy, dx in _NEIGHBOR_OFFSETS:
+            ny, nx = y + dy, x + dx
+            if 0 <= ny < height and 0 <= nx < width:
+                seen.add(int(labels[ny, nx]))
+        if len(seen) >= 2:
+            break
+    if len(seen) < 2:
+        return None
+    first, second = sorted(seen)[:2]
+    return first, second
+
+
 class RegionEngine(ConversionEngine):
     """Draw region boundaries instead of intensity-gradient edges.
 
@@ -444,10 +492,8 @@ class RegionEngine(ConversionEngine):
         self.min_contrast = min_contrast
         self.polyline_epsilon = polyline_epsilon
 
-    def convert(
-        self, image: np.ndarray, *, line_thickness: int = 1, debug: DebugSink | None = None
-    ) -> np.ndarray:
-        """Segment into regions, then draw only the boundaries between them.
+    def convert(self, image: np.ndarray, *, debug: DebugSink | None = None) -> Drawing:
+        """Segment into regions, then trace only the boundaries between them.
 
         See Also
         --------
@@ -496,12 +542,25 @@ class RegionEngine(ConversionEngine):
         contours, _ = cv2.findContours(thinned, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
         segments = [c for c in contours if cv2.arcLength(c, closed=False) >= min_length]
 
-        canvas = redraw_segments(
-            segments,
-            image.shape[:2],
-            polyline_epsilon=self.polyline_epsilon,
-            line_thickness=line_thickness,
-        )
+        height, width = image.shape[:2]
+        total_area = height * width
+        label_areas = np.bincount(labels.reshape(-1), minlength=int(labels.max()) + 1)
+
+        paths: list[Path] = []
+        for contour in segments:
+            wrapped = paths_from_point_chains([contour], (height, width))
+            if not wrapped:
+                continue
+            path = wrapped[0]
+            adjacency = _labels_adjacent_to_contour(contour, labels, height, width)
+            if adjacency is not None:
+                first, second = adjacency
+                source_area = float(min(label_areas[first], label_areas[second])) / total_area
+                path = dataclasses.replace(path, source_area=source_area)
+            paths.append(path)
+
+        drawing = Drawing(paths=tuple(paths), aspect_ratio=width / height)
+        drawing = drawing.simplify(self.polyline_epsilon / working_dimension)
         if debug is not None:
-            debug.save("redraw", canvas)
-        return canvas
+            debug.save("redraw", rasterize(drawing, long_side_px=working_dimension))
+        return drawing

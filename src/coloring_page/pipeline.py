@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import warnings
 from pathlib import Path
 
 import cv2
 import numpy as np
 
+from coloring_page.drawing import Drawing
 from coloring_page.engines.base import ConversionEngine
+from coloring_page.exceptions import UnsupportedImageError
 
 #: File extensions accepted as input photos.
 SUPPORTED_INPUT_SUFFIXES = frozenset({".jpg", ".jpeg", ".png"})
@@ -24,8 +25,10 @@ SUPPORTED_INPUT_SUFFIXES = frozenset({".jpg", ".jpeg", ".png"})
 DEFAULT_WORKING_DIMENSION = 1400
 
 
-class UnsupportedFormatError(ValueError):
-    """Raised when an input file's extension is not a supported image format."""
+#: Compatibility alias for code written against this package before typed
+#: errors existed. New code should catch ``UnsupportedImageError`` (or its
+#: base, ``ColoringPageError``) directly.
+UnsupportedFormatError = UnsupportedImageError
 
 
 def load_image(path: Path) -> np.ndarray:
@@ -46,10 +49,9 @@ def load_image(path: Path) -> np.ndarray:
     ------
     FileNotFoundError
         If ``path`` does not exist.
-    UnsupportedFormatError
-        If ``path``'s extension is not one of ``SUPPORTED_INPUT_SUFFIXES``.
-    ValueError
-        If the file exists and has a supported extension but OpenCV could
+    UnsupportedImageError
+        If ``path``'s extension is not one of ``SUPPORTED_INPUT_SUFFIXES``,
+        or the file exists and has a supported extension but OpenCV could
         not decode it (e.g. it is corrupt or not actually an image).
     """
     if not path.exists():
@@ -57,13 +59,13 @@ def load_image(path: Path) -> np.ndarray:
 
     if path.suffix.lower() not in SUPPORTED_INPUT_SUFFIXES:
         supported = ", ".join(sorted(SUPPORTED_INPUT_SUFFIXES))
-        raise UnsupportedFormatError(
+        raise UnsupportedImageError(
             f"Unsupported file format {path.suffix!r} for {path}. Supported formats: {supported}"
         )
 
     image = cv2.imread(str(path))
     if image is None:
-        raise ValueError(f"Could not decode image file: {path}")
+        raise UnsupportedImageError(f"Could not decode image file: {path}")
 
     return image
 
@@ -199,74 +201,6 @@ def smooth_preserving_edges(
     return cv2.bilateralFilter(gray, d, sigma_color, sigma_space)
 
 
-def remove_short_strokes(binary_image: np.ndarray, *, min_extent: int = 4) -> np.ndarray:
-    """Erase ink components that are too small to read as an intentional stroke.
-
-    Raw edge/threshold output often contains single-pixel or few-pixel
-    noise dots scattered across otherwise flat regions. These read as
-    stray marks on a coloring page rather than intentional strokes, so
-    small components are dropped (painted over with background) while
-    real strokes are left untouched.
-
-    Filtering is done on each component's *extent* (the longer of its
-    bounding-box width/height) rather than its pixel area, because area
-    is the wrong metric for strokes: a long, thin line can have an area
-    as small as a stray dot, and would be wrongly erased by an area
-    threshold even though it is clearly a real line. Extent instead
-    tracks how far a component actually reaches across the page, which
-    a genuine stroke does and a speck does not.
-
-    Parameters
-    ----------
-    binary_image : np.ndarray
-        Single-channel image, shape ``(H, W)``, dtype ``uint8``, where
-        ``255`` is background (paper) and darker pixels are ink, as
-        produced by the conversion engines in this package.
-    min_extent : int, optional
-        Minimum bounding-box extent (the larger of width/height), in
-        pixels, for a component to be kept, by default 4.
-
-    Returns
-    -------
-    np.ndarray
-        Copy of ``binary_image`` with small ink components erased to
-        white.
-    """
-    ink_mask = (binary_image < 128).astype(np.uint8)
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(ink_mask, connectivity=8)
-
-    # Building a boolean "keep this label" lookup table and indexing the
-    # whole label map with it in one vectorized pass avoids rescanning
-    # the full image once per small component, which is what made the
-    # previous loop-based implementation quadratic-ish on noisy images
-    # with thousands of small components.
-    extents = np.maximum(stats[:, cv2.CC_STAT_WIDTH], stats[:, cv2.CC_STAT_HEIGHT])
-    keep = extents >= min_extent
-    keep[0] = True  # background label; irrelevant since it's excluded by ink_mask below
-
-    cleaned = np.where(keep[labels], binary_image, 255).astype(np.uint8)
-    return cleaned
-
-
-def remove_small_specks(binary_image: np.ndarray, *, min_area: int = 4) -> np.ndarray:
-    """Deprecated alias for :func:`remove_short_strokes`.
-
-    .. deprecated::
-        Use :func:`remove_short_strokes` instead. ``min_area`` is passed
-        through as ``min_extent``; the two are not numerically
-        equivalent (area vs. bounding-box extent), so callers relying on
-        precise area-based behavior should migrate explicitly rather
-        than assume identical output.
-    """
-    warnings.warn(
-        "remove_small_specks is deprecated; use remove_short_strokes "
-        "(area filtering replaced by extent filtering) instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return remove_short_strokes(binary_image, min_extent=min_area)
-
-
 class DebugSink:
     """Writes an engine's intermediate conversion stages to disk.
 
@@ -305,24 +239,26 @@ class DebugSink:
         cv2.imwrite(str(self.directory / filename), image)
 
 
-def convert_image(
+def run_pipeline(
     image: np.ndarray,
     engine: ConversionEngine,
     *,
-    line_thickness: int = 1,
     max_dimension: int | None = DEFAULT_WORKING_DIMENSION,
     debug_dir: Path | None = None,
-) -> np.ndarray:
+) -> Drawing:
     """Resize and run a single image through a conversion engine.
+
+    Low-level primitive: takes an already-selected ``engine`` and returns
+    a raw ``Drawing`` with no page placement, detail filtering, or quality
+    validation applied. :func:`coloring_page.api.convert_image` is the
+    public, ``Profile``-driven entrypoint built on top of this.
 
     Parameters
     ----------
     image : np.ndarray
         BGR input image, as returned by :func:`load_image`.
     engine : ConversionEngine
-        The engine used to detect/render the line art.
-    line_thickness : int, optional
-        Approximate output line thickness in pixels, by default 1.
+        The engine used to detect/trace the line art.
     max_dimension : int | None, optional
         The working resolution: the image is downscaled (never upscaled)
         so its longest side does not exceed this value before
@@ -339,12 +275,13 @@ def convert_image(
 
     Returns
     -------
-    np.ndarray
-        Grayscale line-art image, shape ``(H, W)``, dtype ``uint8``.
+    Drawing
+        Normalized vector line art, decoupled from any raster resolution
+        -- see :mod:`coloring_page.drawing`.
     """
     resized = resize_to_max_dimension(image, max_dimension)
     debug_sink = DebugSink(debug_dir) if debug_dir is not None else None
-    return engine.convert(resized, line_thickness=line_thickness, debug=debug_sink)
+    return engine.convert(resized, debug=debug_sink)
 
 
 def save_image(image: np.ndarray, path: Path) -> None:

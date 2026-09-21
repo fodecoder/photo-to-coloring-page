@@ -13,6 +13,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from coloring_page.drawing import rasterize
+from coloring_page.exceptions import WeightsMissingError
+
 torch = pytest.importorskip("torch")
 
 
@@ -32,6 +35,12 @@ def test_registered_only_when_torch_available() -> None:
     # This test file only runs when torch is importable (see
     # `importorskip` above), so the engine must be registered.
     assert "gated" in ENGINES
+
+
+def test_requires_serial_execution_is_true() -> None:
+    from coloring_page.engines.gated import GatedEngine
+
+    assert GatedEngine.requires_serial_execution is True
 
 
 def test_segment_confidence_prefers_dark_regions() -> None:
@@ -77,8 +86,9 @@ def test_stricter_gate_threshold_keeps_no_more_ink(synthetic_photo: np.ndarray) 
     )
     strict = GatedEngine(gate_threshold=200.0, informative_drawings=_StubInformativeDrawings(soft))
 
-    permissive_result = permissive.convert(synthetic_photo)
-    strict_result = strict.convert(synthetic_photo)
+    long_side = max(synthetic_photo.shape[:2])
+    permissive_result = rasterize(permissive.convert(synthetic_photo), long_side_px=long_side)
+    strict_result = rasterize(strict.convert(synthetic_photo), long_side_px=long_side)
 
     assert np.sum(strict_result < 128) <= np.sum(permissive_result < 128)
 
@@ -92,7 +102,7 @@ def test_missing_weights_raises_clear_error(tmp_path: Path) -> None:
     )
     dummy_photo = np.zeros((16, 16, 3), dtype=np.uint8)
 
-    with pytest.raises(FileNotFoundError, match="not found"):
+    with pytest.raises(WeightsMissingError, match="not found"):
         engine.convert(dummy_photo)
 
 
@@ -116,7 +126,8 @@ def test_real_weights_produce_grayscale_line_art(synthetic_photo: np.ndarray) ->
     from coloring_page.engines.gated import GatedEngine
 
     engine = GatedEngine()
-    result = engine.convert(synthetic_photo)
+    drawing = engine.convert(synthetic_photo)
 
-    assert result.shape == synthetic_photo.shape[:2]
-    assert result.dtype == np.uint8
+    assert drawing.aspect_ratio == synthetic_photo.shape[1] / synthetic_photo.shape[0]
+    for path in drawing.paths:
+        assert len(path.points) >= 2

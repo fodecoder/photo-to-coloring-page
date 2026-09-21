@@ -8,7 +8,6 @@ an ML engine" section for setup instructions and license information.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Literal
 
@@ -16,44 +15,43 @@ import cv2
 import numpy as np
 import torch
 
+from coloring_page.drawing import Drawing, paths_from_mask
 from coloring_page.engines._anime2sketch_arch import UnetGenerator, build_generator
 from coloring_page.engines.base import ConversionEngine, DebugSink
-from coloring_page.pipeline import remove_short_strokes
-from coloring_page.postprocess import soft_map_to_line_art
+from coloring_page.exceptions import WeightsMissingError
+from coloring_page.postprocess import (
+    gradient_edges,
+    hysteresis_centerline,
+    normalize_percentile,
+)
+from coloring_page.weights import resolve_weights_path, verify_checksum
 
 #: Environment variable used to point at a local weights file, in place of
-#: the default lookup locations below.
+#: the default lookup locations below. Deprecated in favor of the shared
+#: ``COLORING_PAGE_WEIGHTS_DIR`` (see coloring_page.weights), kept as a
+#: higher-priority override for this file only.
 WEIGHTS_ENV_VAR = "COLORING_PAGE_ANIME2SKETCH_WEIGHTS"
 
-#: Where weights are looked for when neither a constructor argument nor
-#: WEIGHTS_ENV_VAR is set: a `weights/` folder relative to the current
-#: working directory (matching the upstream Anime2Sketch project's own
-#: convention) first, then a per-user cache directory.
-DEFAULT_WEIGHTS_PATH = Path.home() / ".cache" / "coloring_page" / "anime2sketch.pth"
-_LOCAL_WEIGHTS_PATH = Path("weights") / "anime2sketch.pth"
+#: Checkpoint filename within the resolved weights directory.
+_WEIGHTS_FILENAME = "anime2sketch.pth"
+
+#: Where weights are looked for when neither a constructor argument, an
+#: env var, nor ``COLORING_PAGE_WEIGHTS_DIR`` is set: a `weights/` folder
+#: relative to the current working directory (matching the upstream
+#: Anime2Sketch project's own convention) first, then the per-user cache
+#: directory.
+DEFAULT_WEIGHTS_PATH = Path.home() / ".cache" / "coloring_page" / _WEIGHTS_FILENAME
+_LOCAL_WEIGHTS_PATH = Path("weights") / _WEIGHTS_FILENAME
 
 
 def _resolve_weights_path(explicit_path: str | Path | None) -> Path:
-    """Pick the weights file to use, in priority order.
-
-    Priority: an explicit path (constructor argument) > the
-    ``COLORING_PAGE_ANIME2SKETCH_WEIGHTS`` environment variable > an
-    existing ``./weights/anime2sketch.pth`` relative to the current working
-    directory > the per-user cache directory (used as the final fallback
-    even if it doesn't exist yet, so callers get a consistent "expected"
-    path to report in error messages).
-    """
-    if explicit_path is not None:
-        return Path(explicit_path)
-
-    env_path = os.environ.get(WEIGHTS_ENV_VAR)
-    if env_path:
-        return Path(env_path)
-
-    if _LOCAL_WEIGHTS_PATH.exists():
-        return _LOCAL_WEIGHTS_PATH
-
-    return DEFAULT_WEIGHTS_PATH
+    """Pick the weights file to use -- see ``coloring_page.weights.resolve_weights_path``."""
+    return resolve_weights_path(
+        _WEIGHTS_FILENAME,
+        explicit_path=explicit_path,
+        legacy_env_var=WEIGHTS_ENV_VAR,
+        local_path=_LOCAL_WEIGHTS_PATH,
+    )
 
 
 def _resize_and_pad(rgb: np.ndarray, load_size: int) -> tuple[np.ndarray, tuple[int, int]]:
@@ -124,13 +122,13 @@ class Anime2SketchEngine(ConversionEngine):
     """
 
     name = "anime2sketch"
+    requires_serial_execution = True
 
     def __init__(
         self,
         weights_path: str | Path | None = None,
         load_size: int = 512,
         gamma: float = 1.6,
-        binarize: bool = True,
         postprocess_strategy: Literal["nms", "hysteresis"] = "hysteresis",
     ) -> None:
         """Store where to find the pretrained weights and inference options.
@@ -156,18 +154,14 @@ class Anime2SketchEngine(ConversionEngine):
             to collapse those regions into a solid black blob instead of
             linework; lifting shadow detail beforehand (`output = input **
             (1/gamma)`) avoids that failure mode. Set to 1.0 to disable.
-        binarize : bool, optional
-            Whether to turn the network's soft, pencil-shaded output into
-            crisp black-on-white ink lines via
-            :func:`~coloring_page.postprocess.soft_map_to_line_art`, by
-            default True. This matches a printed coloring-book page far
-            better than the raw grayscale sketch; set to False to keep
-            the soft shading instead.
         postprocess_strategy : {"nms", "hysteresis"}, optional
-            Centerline-extraction strategy passed to
-            :func:`~coloring_page.postprocess.soft_map_to_line_art` when
-            ``binarize`` is True, by default ``"hysteresis"``, matching
-            that function's own default. This is a forced override, not a
+            Centerline-extraction strategy applied to the network's soft
+            output before tracing it into vector paths, by default
+            ``"hysteresis"``. A ``Drawing`` has no concept of soft,
+            pencil-shaded output -- unlike this engine's pre-vector
+            behavior, there is no way to opt out of binarization now, since
+            vector line art is inherently already a binary decision about
+            where a stroke is. This is a forced override, not a
             re-validated choice: this network's soft output is
             wide/blurry (~12% ink after thresholding), and skeletonizing
             that down to a proper 1px centerline collapses ink coverage
@@ -179,18 +173,16 @@ class Anime2SketchEngine(ConversionEngine):
             ``"hysteresis"`` drops this engine's ``f1_normalized`` on all
             3 reference pairs (0.447/0.183/0.322 ->
             0.193/0.110/0.164). The default is set to ``"hysteresis"``
-            anyway, for consistency with ``soft_map_to_line_art`` and
-            because a doubled-edge output is not a centerline regardless
-            of what it scores. Pass ``postprocess_strategy="nms"``
-            explicitly to restore the higher-scoring behavior. Revisit
-            once ``hysteresis_centerline``'s thresholds are retuned for
-            this network's output, or a sharper soft map is available.
-            Ignored when ``binarize`` is False.
+            anyway, because a doubled-edge output is not a centerline
+            regardless of what it scores. Pass
+            ``postprocess_strategy="nms"`` explicitly to restore the
+            higher-scoring behavior. Revisit once
+            ``hysteresis_centerline``'s thresholds are retuned for this
+            network's output, or a sharper soft map is available.
         """
         self.weights_path = _resolve_weights_path(weights_path)
         self.load_size = load_size
         self.gamma = gamma
-        self.binarize = binarize
         self.postprocess_strategy = postprocess_strategy
         self._model: UnetGenerator | None = None
 
@@ -199,15 +191,20 @@ class Anime2SketchEngine(ConversionEngine):
 
         Raises
         ------
-        FileNotFoundError
+        WeightsMissingError
             If no weights file exists at ``self.weights_path``, with
             instructions for obtaining one.
+        WeightsChecksumError
+            If the weights file exists but doesn't match its pinned
+            SHA256 (only checked for filenames known to
+            ``coloring_page.weights.CHECKSUMS``).
         """
         if self._model is not None:
             return self._model
 
         if not self.weights_path.exists():
-            raise FileNotFoundError(_WEIGHTS_HELP.format(path=self.weights_path))
+            raise WeightsMissingError(_WEIGHTS_HELP.format(path=self.weights_path))
+        verify_checksum(self.weights_path, _WEIGHTS_FILENAME)
 
         model = build_generator()
         checkpoint = torch.load(self.weights_path, map_location="cpu")
@@ -218,10 +215,8 @@ class Anime2SketchEngine(ConversionEngine):
         self._model = model
         return model
 
-    def convert(
-        self, image: np.ndarray, *, line_thickness: int = 1, debug: DebugSink | None = None
-    ) -> np.ndarray:
-        """Run the pretrained network and render its output as line art.
+    def convert(self, image: np.ndarray, *, debug: DebugSink | None = None) -> Drawing:
+        """Run the pretrained network and trace its output into vector line art.
 
         See Also
         --------
@@ -254,13 +249,16 @@ class Anime2SketchEngine(ConversionEngine):
         if debug is not None:
             debug.save("raw_sketch", sketch)
 
-        if self.binarize:
-            return soft_map_to_line_art(
-                sketch, strategy=self.postprocess_strategy, line_thickness=line_thickness
+        normalized = normalize_percentile(sketch)
+        if self.postprocess_strategy == "hysteresis":
+            centerline = hysteresis_centerline(normalized)
+        elif self.postprocess_strategy == "nms":
+            centerline = gradient_edges(normalized)
+        else:
+            raise ValueError(
+                f"Unknown postprocess_strategy {self.postprocess_strategy!r}; "
+                "expected 'nms' or 'hysteresis'."
             )
 
-        if line_thickness > 1:
-            kernel = np.ones((line_thickness, line_thickness), np.uint8)
-            sketch = cv2.erode(sketch, kernel, iterations=1)
-
-        return remove_short_strokes(sketch)
+        paths = paths_from_mask(centerline, kind="detail")
+        return Drawing(paths=paths, aspect_ratio=original_width / original_height)
