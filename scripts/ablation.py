@@ -84,11 +84,22 @@ class AblationRow:
 
 
 def _iter_input_images(input_dir: Path) -> list[Path]:
-    """Return the supported image files directly inside ``input_dir``, sorted."""
+    """Return the ``starting-image*`` source photos directly inside ``input_dir``, sorted.
+
+    Deliberately narrower than "every supported image in the directory":
+    ``docs/`` also holds reference line art (``desired*.jpg``, the target
+    this ablation is judged against, not an input to convert) and
+    diagnostic artifacts (``diagnosis-contact-sheet.png``) that are not
+    source photos -- including them here would silently feed a finished
+    drawing or a comparison grid back into the engines as if it were a
+    photo.
+    """
     return sorted(
         p
         for p in input_dir.iterdir()
-        if p.is_file() and p.suffix.lower() in SUPPORTED_INPUT_SUFFIXES
+        if p.is_file()
+        and p.suffix.lower() in SUPPORTED_INPUT_SUFFIXES
+        and p.stem.startswith("starting-image")
     )
 
 
