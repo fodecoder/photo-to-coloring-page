@@ -7,7 +7,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from coloring_page.drawing import Drawing
+from coloring_page.artwork import Artwork
 from coloring_page.engines.base import ConversionEngine
 from coloring_page.exceptions import UnsupportedImageError
 
@@ -245,13 +245,15 @@ def run_pipeline(
     *,
     max_dimension: int | None = DEFAULT_WORKING_DIMENSION,
     debug_dir: Path | None = None,
-) -> Drawing:
+) -> Artwork:
     """Resize and run a single image through a conversion engine.
 
     Low-level primitive: takes an already-selected ``engine`` and returns
-    a raw ``Drawing`` with no page placement, detail filtering, or quality
-    validation applied. :func:`coloring_page.api.convert_image` is the
-    public, ``Profile``-driven entrypoint built on top of this.
+    its raw output (a ``Drawing`` or a ``RasterArtwork``, see
+    :mod:`coloring_page.artwork`) with no page placement, detail
+    filtering, or quality validation applied.
+    :func:`coloring_page.api.convert_image` is the public,
+    ``Profile``-driven entrypoint built on top of this.
 
     Parameters
     ----------
@@ -275,9 +277,9 @@ def run_pipeline(
 
     Returns
     -------
-    Drawing
-        Normalized vector line art, decoupled from any raster resolution
-        -- see :mod:`coloring_page.drawing`.
+    Artwork
+        Either a ``Drawing`` (normalized vector line art) or a
+        ``RasterArtwork`` -- see :mod:`coloring_page.artwork`.
     """
     resized = resize_to_max_dimension(image, max_dimension)
     debug_sink = DebugSink(debug_dir) if debug_dir is not None else None

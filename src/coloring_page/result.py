@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from coloring_page.drawing import Drawing
+from coloring_page.artwork import Artwork
 from coloring_page.page import PageSpec
 from coloring_page.pipeline import save_image
 from coloring_page.render import to_pdf, to_png, to_svg
@@ -18,8 +18,13 @@ class Result:
 
     Attributes
     ----------
-    drawing : Drawing
-        The final vector line art (after detail filtering).
+    drawing : Artwork
+        The final line art (after detail filtering, for a ``Drawing``) --
+        either a :class:`~coloring_page.drawing.Drawing` or a
+        :class:`~coloring_page.artwork.RasterArtwork`, see
+        :mod:`coloring_page.artwork`. Kept named ``drawing`` rather than
+        renamed to ``artwork`` to avoid touching every existing caller for
+        a cosmetic rename.
     report : QualityReport
         Colorability measurements for ``drawing`` rendered onto ``page``.
         Always present -- see :func:`coloring_page.convert_image`'s
@@ -35,7 +40,7 @@ class Result:
     disk.
     """
 
-    drawing: Drawing
+    drawing: Artwork
     report: QualityReport
     timings: dict[str, float]
     page: PageSpec

@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from coloring_page.drawing import rasterize
+from coloring_page.drawing import Drawing, rasterize
 from coloring_page.engines.registry import get_engine
 from coloring_page.exceptions import ImageTooLargeError, UnsupportedImageError
 from coloring_page.logging_utils import stage_timer
@@ -90,7 +90,8 @@ def convert_image(src: Path | np.ndarray, *, profile: Profile) -> Result:
     Returns
     -------
     Result
-        Exposes ``drawing``, ``report``, ``timings``, and
+        Exposes ``drawing`` (a ``Drawing`` or a ``RasterArtwork``, see
+        :mod:`coloring_page.artwork`), ``report``, ``timings``, and
         ``save_svg``/``save_pdf``/``save_png``. Always returned regardless
         of whether ``report.passed`` -- callers decide for themselves
         whether a failing quality report is acceptable; only the CLI's
@@ -133,19 +134,25 @@ def convert_image(src: Path | np.ndarray, *, profile: Profile) -> Result:
 
     with stage_timer(logger, "engine", timings):
         engine = get_engine(profile.style, device=profile.device)
-        drawing = engine.convert(resized, debug=debug_sink)
+        artwork = engine.convert(resized, debug=debug_sink)
 
     with stage_timer(logger, "detail_filter", timings):
-        if debug_sink is not None:
-            pre_raster = rasterize(drawing, long_side_px=working_dimension)
-            debug_sink.save("drawing_pre_filter", pre_raster)
-        drawing = apply_detail(drawing, profile, debug=debug_sink)
-        if debug_sink is not None:
-            post_raster = rasterize(drawing, long_side_px=working_dimension)
-            debug_sink.save("drawing_post_filter", post_raster)
+        # apply_detail is a Drawing-only post-hoc filter (region-area/
+        # stroke-length/simplify-epsilon pruning on traced paths); a
+        # RasterArtwork has no paths to filter, so it passes through
+        # unchanged. See coloring_page.artwork for why both representations
+        # exist.
+        if isinstance(artwork, Drawing):
+            if debug_sink is not None:
+                pre_raster = rasterize(artwork, long_side_px=working_dimension)
+                debug_sink.save("drawing_pre_filter", pre_raster)
+            artwork = apply_detail(artwork, profile, debug=debug_sink)
+            if debug_sink is not None:
+                post_raster = rasterize(artwork, long_side_px=working_dimension)
+                debug_sink.save("drawing_post_filter", post_raster)
 
     with stage_timer(logger, "validate", timings):
-        report = validate(drawing, profile.page)
+        report = validate(artwork, profile.page)
 
     timings["total"] = sum(timings.values())
-    return Result(drawing=drawing, report=report, timings=timings, page=profile.page)
+    return Result(drawing=artwork, report=report, timings=timings, page=profile.page)

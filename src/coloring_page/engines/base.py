@@ -12,7 +12,7 @@ from typing import Protocol
 
 import numpy as np
 
-from coloring_page.drawing import Drawing
+from coloring_page.artwork import Artwork
 
 
 class DebugSink(Protocol):
@@ -35,11 +35,16 @@ class ConversionEngine(ABC):
     """Base class for algorithms that turn a photo into line art.
 
     Implementations receive a BGR image (as loaded by OpenCV) and must
-    return a :class:`~coloring_page.drawing.Drawing`: a normalized vector
-    representation of the traced line art, decoupled from any particular
-    raster resolution -- see :mod:`coloring_page.drawing` for the full
-    contract. Keeping this contract narrow is what lets the CLI treat
-    every engine identically regardless of the technique behind it.
+    return an :data:`~coloring_page.artwork.Artwork`: either a
+    :class:`~coloring_page.drawing.Drawing` (normalized vector line art,
+    decoupled from any particular raster resolution -- see
+    :mod:`coloring_page.drawing`) or a
+    :class:`~coloring_page.artwork.RasterArtwork` (an antialiased raster,
+    for the cases where vectorizing would destroy the very ink pattern
+    that makes the output good -- see :mod:`coloring_page.artwork` for
+    when each is the right choice). Keeping this contract narrow is what
+    lets the CLI treat every engine identically regardless of the
+    technique behind it.
     """
 
     #: Short, CLI-facing identifier for this engine (e.g. "canny").
@@ -60,8 +65,8 @@ class ConversionEngine(ABC):
     requires_serial_execution: bool = False
 
     @abstractmethod
-    def convert(self, image: np.ndarray, *, debug: DebugSink | None = None) -> Drawing:
-        """Convert a BGR photo into vector coloring-page line art.
+    def convert(self, image: np.ndarray, *, debug: DebugSink | None = None) -> Artwork:
+        """Convert a BGR photo into coloring-page line art.
 
         Parameters
         ----------
@@ -81,8 +86,11 @@ class ConversionEngine(ABC):
 
         Returns
         -------
-        Drawing
-            Normalized vector line art, decoupled from any raster
-            resolution -- see :mod:`coloring_page.drawing`.
+        Artwork
+            Either a :class:`~coloring_page.drawing.Drawing` (normalized
+            vector line art) or a
+            :class:`~coloring_page.artwork.RasterArtwork` (antialiased
+            raster) -- see :mod:`coloring_page.artwork` for the full
+            contract.
         """
         raise NotImplementedError

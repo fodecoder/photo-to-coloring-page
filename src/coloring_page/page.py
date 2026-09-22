@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, cast
 
-from coloring_page.drawing import Drawing
+from coloring_page.artwork import Artwork
 
 #: Named page sizes in millimeters, as ``(width, height)`` in portrait
 #: orientation. ``LETTER`` uses the US customary 8.5x11in size converted to
@@ -178,24 +178,27 @@ class PageSpec:
         )
 
 
-def fit_transform(drawing: Drawing, spec: PageSpec) -> tuple[float, float, float]:
-    """Compute the mapping from a ``Drawing``'s normalized coordinates to page mm.
+def fit_transform(artwork: Artwork, spec: PageSpec) -> tuple[float, float, float]:
+    """Compute the mapping from an ``Artwork``'s normalized coordinates to page mm.
 
     Every renderer in :mod:`coloring_page.render` calls this instead of
     deriving its own placement, so an SVG/PDF/PNG export of the same
-    ``(drawing, spec)`` pair always places content identically.
+    ``(artwork, spec)`` pair always places content identically.
 
     The content is inscribed into :attr:`PageSpec.usable_size_mm`
     preserving its aspect ratio (letterboxed, not stretched or cropped)
-    and centered within it. Fitting is done against ``drawing.aspect_ratio``
-    -- the aspect ratio of the *source image* the paths were normalized
-    against, not ``drawing.bounds()`` -- so placement doesn't shift
-    depending on how much of the frame happens to contain ink.
+    and centered within it. Fitting is done against ``artwork.aspect_ratio``
+    -- the aspect ratio of the *source image* the content was normalized
+    against, not any bounding box of the ink itself -- so placement doesn't
+    shift depending on how much of the frame happens to contain ink. This
+    only reads ``.aspect_ratio``, so it works identically for a
+    :class:`~coloring_page.drawing.Drawing` or a
+    :class:`~coloring_page.artwork.RasterArtwork`.
 
     Parameters
     ----------
-    drawing : Drawing
-        The vector line art to place.
+    artwork : Artwork
+        The line art to place.
     spec : PageSpec
         The target page geometry.
 
@@ -208,10 +211,10 @@ def fit_transform(drawing: Drawing, spec: PageSpec) -> tuple[float, float, float
         axes share the same ``scale``, which is what preserves aspect
         ratio.
     """
-    if drawing.aspect_ratio >= 1:
-        content_width_units, content_height_units = 1.0, 1.0 / drawing.aspect_ratio
+    if artwork.aspect_ratio >= 1:
+        content_width_units, content_height_units = 1.0, 1.0 / artwork.aspect_ratio
     else:
-        content_width_units, content_height_units = drawing.aspect_ratio, 1.0
+        content_width_units, content_height_units = artwork.aspect_ratio, 1.0
 
     usable_width_mm, usable_height_mm = spec.usable_size_mm
     scale = min(usable_width_mm / content_width_units, usable_height_mm / content_height_units)
