@@ -77,6 +77,17 @@ lineart = [
     # boundary/detail duplicate-path removal (_drop_hausdorff_duplicates).
     "scipy>=1.10,<2",
 ]
+lineart_raster = [
+    # Enables the `lineart-raster` engine
+    # (src/coloring_page/engines/lineart_raster.py): `lineart`'s Stage B
+    # detail-line network alone, returned as an un-vectorized raster. A
+    # separate extra from `lineart` (rather than reusing it) since this
+    # engine deliberately has no SAM 2 segmentation stage and must stay
+    # installable/available without `sam2` at all.
+    "torch>=2.0,<3",
+    "controlnet_aux>=0.0.7,<0.1",
+    "huggingface_hub>=0.20,<1",
+]
 
 [project.scripts]
 coloring-page = "coloring_page.cli:main"

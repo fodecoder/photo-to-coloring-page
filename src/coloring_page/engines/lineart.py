@@ -14,9 +14,10 @@ pattern) -- a purpose-built line-extraction network recovers that
 separately (Stage B). The two candidate sources are then pruned against a
 physical, print-size-relative notion of "small enough to matter, big
 enough to color" (Stage C) and turned into smooth, deduplicated vector
-paths (Stage D). See ``docs/DIAGNOSIS.md`` #5-#6 and
-``docs/PRODUCTION-PROMPTS.md``'s Prompt 3 for the full design rationale
-this engine implements.
+paths (Stage D). See ``docs/DIAGNOSIS.md`` #5-#6 for the full design
+rationale this engine implements. Stage B alone, without segmentation or
+vectorization, is also available as its own standalone engine -- see
+``coloring_page.engines.lineart_raster``.
 
 Requires the ``lineart`` extra (``pip install -e ".[lineart]"``) for
 ``torch``, ``sam2``, and ``controlnet_aux``, plus two manually downloaded
@@ -602,9 +603,10 @@ class LineArtEngine(ConversionEngine):
     Four independently-testable stages (:func:`_segment`,
     :func:`_detail_lines`, :func:`_merge_and_prune`, :func:`_regularize`) --
     see the module docstring for the overall rationale. Not yet measured
-    against this project's reference images with real weights (see
-    ``docs/PRODUCTION-PROMPTS.md``'s pre-merge gates); registered as
-    ``experimental`` until that measurement happens.
+    against this project's reference images with real weights; registered
+    as ``experimental`` until that measurement happens. Stage B alone is
+    measured separately, without this engine's segmentation/vectorization,
+    by ``coloring_page.engines.lineart_raster`` and ``scripts/ablation.py``.
     """
 
     name = "lineart"

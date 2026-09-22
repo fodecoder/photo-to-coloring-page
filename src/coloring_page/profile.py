@@ -180,6 +180,20 @@ DETAIL_PRESETS: dict[DetailLevel, DetailParams] = {
     ),
 }
 
+#: Inference resolution (short side, px) a raster-style engine constructed
+#: with a ``resolution`` parameter should run at for a given detail level --
+#: separate from :data:`DETAIL_PRESETS`'s mm-based post-hoc filter
+#: thresholds, since a raster engine has no post-hoc filter step to apply
+#: those to (see :func:`apply_detail`). A CNN run at half the resolution
+#: has a proportionally larger receptive field relative to the scene, so a
+#: lower resolution draws less detail and proportionally thicker strokes --
+#: "simplify" for a raster engine is a resolution change, not a filter.
+RASTER_RESOLUTION_PRESETS: dict[DetailLevel, int] = {
+    "toddler": 512,
+    "child": 768,
+    "adult": 1280,
+}
+
 
 def _content_area_mm2(scale_mm_per_unit: float, aspect_ratio: float) -> float:
     """Physical area, in mm^2, that a ``Drawing``'s normalized unit square maps to.

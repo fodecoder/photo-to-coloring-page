@@ -26,7 +26,7 @@ from coloring_page.pipeline import (
     load_image,
     resize_to_max_dimension,
 )
-from coloring_page.profile import Profile, apply_detail
+from coloring_page.profile import RASTER_RESOLUTION_PRESETS, Profile, apply_detail
 from coloring_page.result import Result
 from coloring_page.seeding import seed_everything
 from coloring_page.validate import validate
@@ -133,7 +133,11 @@ def convert_image(src: Path | np.ndarray, *, profile: Profile) -> Result:
     debug_sink = DebugSink(profile.debug_dir) if profile.debug_dir is not None else None
 
     with stage_timer(logger, "engine", timings):
-        engine = get_engine(profile.style, device=profile.device)
+        engine = get_engine(
+            profile.style,
+            device=profile.device,
+            resolution=RASTER_RESOLUTION_PRESETS[profile.detail],
+        )
         artwork = engine.convert(resized, debug=debug_sink)
 
     with stage_timer(logger, "detail_filter", timings):

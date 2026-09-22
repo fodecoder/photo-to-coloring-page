@@ -24,10 +24,11 @@ docs/DIAGNOSIS.md -- and by the `lineart` engine's Stage A
 A fourth checkpoint, `netG.pth`, is controlnet_aux's `lineart_anime`
 preprocessor weights, used by the `lineart` engine's Stage B for fine
 internal detail (facial features, folds, deliberate patterns) SAM's
-region partition alone can't see -- see docs/PRODUCTION-PROMPTS.md's
-Prompt 3. Kept as `netG.pth` (not renamed like the Informative Drawings
-checkpoints) since controlnet_aux's own loader expects to find it under
-that exact name.
+region partition alone can't see, and by the standalone `lineart-raster`
+engine (src/coloring_page/engines/lineart_raster.py), which isolates that
+same stage without the SAM segmentation step. Kept as `netG.pth` (not
+renamed like the Informative Drawings checkpoints) since controlnet_aux's
+own loader expects to find it under that exact name.
 
 Usage
 -----

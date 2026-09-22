@@ -51,6 +51,19 @@ else:
     ENGINES["gated"] = GatedEngine
 
 try:
+    from coloring_page.engines.lineart_raster import LineArtRasterEngine
+except ImportError:
+    # The `lineart_raster` extra (torch, controlnet_aux) isn't installed --
+    # this engine simply doesn't appear as a `--style` choice unless
+    # `pip install -e ".[lineart_raster]"` was run. A separate try/except
+    # from `lineart` below (rather than sharing one) since this engine
+    # doesn't need `sam2` -- it must stay available even when `sam2` isn't
+    # installed.
+    pass
+else:
+    ENGINES["lineart-raster"] = LineArtRasterEngine
+
+try:
     from coloring_page.engines.lineart import LineArtEngine
 except ImportError:
     # The `lineart` extra (torch, sam2, controlnet_aux) isn't installed --
@@ -61,7 +74,9 @@ else:
     ENGINES["lineart"] = LineArtEngine
 
 
-def get_engine(style: str, *, device: str = "auto") -> ConversionEngine:
+def get_engine(
+    style: str, *, device: str = "auto", resolution: int | None = None
+) -> ConversionEngine:
     """Instantiate the conversion engine registered under ``style``.
 
     Parameters
@@ -73,6 +88,15 @@ def get_engine(style: str, *, device: str = "auto") -> ConversionEngine:
         constructor only when it accepts a ``device`` parameter (checked
         via ``inspect.signature``) -- classical (non-ML) engines don't,
         and are constructed with no arguments regardless of this value.
+    resolution : int | None, optional
+        Inference resolution, by default None. Passed to the engine's
+        constructor only when it accepts a ``resolution`` parameter --
+        the reserved name a raster-style engine adopts to opt into
+        ``Profile.detail``-driven resolution wiring (see
+        ``coloring_page.profile.RASTER_RESOLUTION_PRESETS`` and
+        ``coloring_page.engines.lineart_raster.LineArtRasterEngine``).
+        ``lineart.py``'s ``segmentation_resolution``/``detail_resolution``
+        deliberately use different names and so are not affected by this.
 
     Returns
     -------
@@ -93,6 +117,10 @@ def get_engine(style: str, *, device: str = "auto") -> ConversionEngine:
         raise EngineUnavailableError(
             f"Unknown style {style!r}. Available styles: {available}"
         ) from exc
-    if "device" in inspect.signature(engine_cls.__init__).parameters:
-        return engine_cls(device=device)  # type: ignore[call-arg]
-    return engine_cls()
+    params = inspect.signature(engine_cls.__init__).parameters
+    kwargs: dict[str, object] = {}
+    if "device" in params:
+        kwargs["device"] = device
+    if resolution is not None and "resolution" in params:
+        kwargs["resolution"] = resolution
+    return engine_cls(**kwargs)

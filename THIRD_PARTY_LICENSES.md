@@ -143,13 +143,18 @@ reproduction is required here beyond attribution; the full Apache-2.0
 text is available at
 https://github.com/facebookresearch/sam2/blob/main/LICENSE.
 
-## controlnet_aux `lineart_anime` checkpoint (`lineart` engine, Stage B) -- UNVERIFIED, BLOCKS MERGE
+## controlnet_aux `lineart_anime` checkpoint (`lineart` and `lineart-raster` engines) -- UNVERIFIED, BLOCKS MERGE
 
-- **Package**: `controlnet_aux` (the `lineart` optional extra)
+- **Package**: `controlnet_aux` (the `lineart` and `lineart_raster`
+  optional extras)
 - **Checkpoint**: `netG.pth`, served from the `lllyasviel/Annotators`
   Hugging Face mirror (see `scripts/fetch_weights.py`) -- the same
   repository already flagged above as an accepted, still-unconfirmed
   redistribution-license risk for the Informative Drawings checkpoints.
+- **Used by**: `lineart.py`'s Stage B, and `lineart_raster.py`'s
+  `LineArtRasterEngine` (which isolates that same stage as its own
+  engine, minus segmentation/vectorization) -- both load the identical
+  checkpoint file, so this is one license question, not two.
 - **`controlnet_aux` package license**: Apache License 2.0 (confirmed).
 - **Checkpoint's own upstream license**: **not yet confirmed** as of this
   engine's implementation. `lineart_anime` traces back to a distinct
@@ -161,10 +166,20 @@ https://github.com/facebookresearch/sam2/blob/main/LICENSE.
 **This project's `add-conversion-style` skill requires the license of any
 external model to be identified and confirmed to permit the intended use
 (including commercial/redistribution use) before a new ML-backed engine is
-merged.** That step is not complete for this checkpoint -- `lineart.py`'s
-Stage B is implemented and tested (with injected stubs, no real weights
+merged.** That step is not complete for this checkpoint -- both engines
+are implemented and unit-tested (with injected stubs, no real weights
 involved), but this checkpoint must not be fetched or relied on for real
-output, and this engine must not be promoted past `experimental` status,
-until this entry is replaced with a confirmed upstream license (or an
-explicit, documented accepted-risk decision, mirroring the Informative
+output until this entry is replaced with a confirmed upstream license (or
+an explicit, documented accepted-risk decision, mirroring the Informative
 Drawings precedent above).
+
+**Note on `lineart-raster`'s `experimental = False` status**: unlike
+`lineart.py` (kept `experimental` pending measurement against reference
+images), `lineart_raster.py` is deliberately registered as
+non-experimental so it can actually be run and measured (see
+`scripts/ablation.py`) -- but it depends on this exact same unconfirmed
+checkpoint. "Not experimental" here describes the code path's maturity
+(it is the whole point of Phase 2's measurement), not a claim that this
+license blocker is resolved. Resolve this entry -- confirm the license or
+make an explicit accepted-risk decision -- before either engine is relied
+on for real output outside of measurement/development.

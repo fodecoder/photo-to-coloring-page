@@ -275,9 +275,9 @@ didn't) for the numbers.
   shading transitions gracefully, but measures far behind every other
   style here (`f1_normalized` averaging ~0.05 across the 3 reference
   images) — it draws noticeably less ink than the reference line art, not
-  a leftover bug (the DoG sign error documented in
-  `docs/IMPROVEMENT-PROMPT.md` is already fixed). Kept registered for its
-  distinct artistic look, not as a coloring-page candidate.
+  a leftover bug (the DoG sign error this style once had is already
+  fixed). Kept registered for its distinct artistic look, not as a
+  coloring-page candidate.
 - **`skeleton`** — an alternative route to the same "redraw the geometry"
   idea: L0 gradient minimization flattens texture, Canny finds edges,
   `cv2.ximgproc.thinning` reduces them to a 1px skeleton (with short
@@ -348,11 +348,26 @@ didn't) for the numbers.
   color" expressed in millimeters (`min_region_area_mm2`,
   `min_path_length_mm`, converted to pixels via `print_dpi` -- these are
   constructor parameters, not yet exposed as CLI flags), and smooths the
-  result with Chaikin corner-cutting. Not yet measured against this project's
-  reference images with real weights (see `docs/PRODUCTION-PROMPTS.md`'s
-  Prompt 3 pre-merge gates); its Stage B checkpoint's license is also not
-  yet confirmed (see `THIRD_PARTY_LICENSES.md`) -- **do not use for real
-  output yet**. See `engines/lineart.py`'s docstring for the full design.
+  result with Chaikin corner-cutting. Not yet measured against this
+  project's reference images with real weights; its Stage B checkpoint's
+  license is also not yet confirmed (see `THIRD_PARTY_LICENSES.md`) --
+  **do not use for real output yet**. See `engines/lineart.py`'s
+  docstring for the full design.
+- **`lineart-raster`** *(optional — requires `controlnet_aux` setup, see
+  below; no `sam2` needed)* — `lineart`'s Stage B detail-line network,
+  isolated as its own engine and returned un-vectorized as a
+  `RasterArtwork` (see `coloring_page.artwork`) instead of being merged,
+  pruned, and traced into a `Drawing`. Exists because this project's
+  vector pipeline (binarize → thin → trace) demonstrably destroys the
+  antialiasing and stroke-width modulation of a good reference line-art
+  image; this engine measures whether Stage B alone, kept raster, gets
+  closer to that reference than `chained` does — see
+  `scripts/ablation.py`. `resolution` (default 1024) is the short-side
+  working resolution the network runs at, and is what `--detail`
+  maps to via `coloring_page.profile.RASTER_RESOLUTION_PRESETS`
+  (toddler=512, child=768, adult=1280) for this engine. Shares
+  `lineart`'s Stage B checkpoint and its not-yet-confirmed license (see
+  `THIRD_PARTY_LICENSES.md`) — **do not use for real output yet**.
 
 All built-in styles are implemented in `src/coloring_page/engines/`.
 

@@ -31,6 +31,7 @@ from metrics import (
     degenerate_floor,
 )
 
+from coloring_page.artwork import RasterArtwork
 from coloring_page.drawing import rasterize
 from coloring_page.engines.registry import ENGINES, get_engine
 from coloring_page.pipeline import SUPPORTED_INPUT_SUFFIXES, load_image, run_pipeline
@@ -54,9 +55,8 @@ REFERENCE_PAIRS = {
 #: ``chained`` at any non-trivial gate threshold (see ``engines/gated.py``'s
 #: docstring). Excludes ``xdog``: measured ``f1_normalized`` averages
 #: ~0.05 across this project's 3 reference pairs (recall 0.32-0.42 even
-#: though the DoG sign-error bug documented in
-#: ``docs/IMPROVEMENT-PROMPT.md`` is already fixed -- it now just draws
-#: too little ink relative to the reference to be a coloring-page
+#: though this style's DoG sign-error bug is already fixed -- it now just
+#: draws too little ink relative to the reference to be a coloring-page
 #: candidate here, not a leftover bug). All three stay registered and
 #: selectable via ``--styles`` for experimentation, just not part of the
 #: default comparison.
@@ -92,10 +92,13 @@ def _label_tile(image: np.ndarray, label: str) -> np.ndarray:
 def _convert_with_style(image: np.ndarray, style: str) -> np.ndarray | None:
     """Run one style, returning ``None`` (and a stderr warning) on failure.
 
-    Rasterizes the engine's vector ``Drawing`` back to a raster image (via
-    the stopgap :func:`~coloring_page.drawing.rasterize`) at the source
-    image's own long side, so every downstream metric/contact-sheet call
-    in this script keeps working on plain ``np.ndarray`` output.
+    An engine returning a vector ``Drawing`` is rasterized back to a raster
+    image (via the stopgap :func:`~coloring_page.drawing.rasterize`) at
+    the source image's own long side; one returning a
+    :class:`~coloring_page.artwork.RasterArtwork` (see
+    :mod:`coloring_page.artwork`) is resized to that same long side
+    instead -- either way, every downstream metric/contact-sheet call in
+    this script keeps working on plain ``np.ndarray`` output.
 
     A style can fail per-image for reasons unrelated to the comparison
     itself -- most notably ``anime2sketch`` raising ``FileNotFoundError``
@@ -104,8 +107,16 @@ def _convert_with_style(image: np.ndarray, style: str) -> np.ndarray | None:
     """
     try:
         engine = get_engine(style)
-        drawing = run_pipeline(image, engine)
-        return rasterize(drawing, long_side_px=max(image.shape[:2]))
+        artwork = run_pipeline(image, engine)
+        long_side_px = max(image.shape[:2])
+        if isinstance(artwork, RasterArtwork):
+            height, width = artwork.image.shape[:2]
+            if height >= width:
+                target = (max(1, round(long_side_px * width / height)), long_side_px)
+            else:
+                target = (long_side_px, max(1, round(long_side_px * height / width)))
+            return cv2.resize(artwork.image, target, interpolation=cv2.INTER_AREA)
+        return rasterize(artwork, long_side_px=long_side_px)
     except (FileNotFoundError, ValueError, OSError) as exc:
         print(f"Skipping style {style!r}: {exc}", file=sys.stderr)
         return None
