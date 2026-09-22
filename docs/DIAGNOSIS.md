@@ -17,8 +17,9 @@ Ci sono quattro cause indipendenti, in ordine di impatto:
 3. **`informative_drawings` gira a 256×256 quadrati.** Aspect ratio distrutto,
    risoluzione 4× sotto quella di training, poi upscale 5×.
 4. **La metrica di accettazione è incoerente.** Il criterio "F1 ≥ 0.75 a
-   tolleranza 2 px" di `IMPROVEMENT-PROMPT-2.md` è irraggiungibile per
-   costruzione, e ha guidato scelte sbagliate (fra cui il punto 2).
+   tolleranza 2 px" (dal planning doc che ha preceduto questo, da allora
+   rimosso) è irraggiungibile per costruzione, e ha guidato scelte
+   sbagliate (fra cui il punto 2).
 
 ---
 
@@ -34,8 +35,9 @@ famiglia *lineart anime / manga line extraction*, non di un edge detector.
 **gradiente locale**. Su una tavola illustrata il gradiente è ovunque: glow,
 sfumature, riflessi sull'acqua, grana della carta. Nessuna taratura di soglia
 distingue "bordo di oggetto" da "bordo di ombra", perché a livello di pixel
-sono lo stesso segnale. Questo è già stato verificato nello sweep documentato
-in `IMPROVEMENT-PROMPT-2.md` § 2.1 e la conclusione resta valida.
+sono lo stesso segnale. Questo è già stato verificato in uno sweep
+precedente (documentato in un planning doc da allora rimosso) e la
+conclusione resta valida.
 
 **Conseguenza**: `canny` come `--style` di default garantisce un output
 inutilizzabile in produzione, qualunque sia la taratura.
@@ -122,10 +124,10 @@ ha alcuna giustificazione.
 La tabella sopra è stata misurata con una reimplementazione NumPy della rete
 (l'ambiente di allora non aveva PyTorch). Il codice attuale
 (`_resize_short_side`, `detect_resolution` di default 1024,
-`postprocess_strategy="hysteresis"`) implementa già i punti 1-3 e 5 del
-checklist di `IMPROVEMENT-PROMPT-3.md`; restava da rifare la tabella con
-torch vero e misurare anche 1280/1536, come richiesto lì esplicitamente
-("se diverge di più del 3% di F1, fermati").
+`postprocess_strategy="hysteresis"`) implementa già i punti 1-3 e 5 di una
+checklist precedente (da un planning doc da allora rimosso); restava da
+rifare la tabella con torch vero e misurare anche 1280/1536, come
+richiesto lì esplicitamente ("se diverge di più del 3% di F1, fermati").
 
 Rieseguita con `weights/informative_drawings.pth` (checkpoint "fine",
 SHA256 `c686ced2...`, stesso pinnato dal commit che l'ha scelto), ai
@@ -293,7 +295,8 @@ taratura.
 1. **Metrica** (`metrics.py`, `scripts/compare.py`): tolleranza relativa
    (0.5 % del lato lungo), thinning di entrambe le mappe, floor degenere
    riportato e F1 normalizzato, vincolo di ammissibilità sull'inchiostro 3–7 %.
-   Aggiornare il criterio di accettazione in `IMPROVEMENT-PROMPT-2.md` § 8.
+   Aggiornare il criterio di accettazione (era § 8 di un planning doc da
+   allora rimosso).
 2. **`postprocess.py`**: default `strategy="hysteresis"`. Aggiungere un test
    sintetico (il tratto da 6 px di § 2) che fallisce se un tratto pieno
    produce più di una linea. Rinominare `nms_centerline` in
