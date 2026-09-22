@@ -74,14 +74,27 @@ class TestConvert:
 
         assert artwork.image.ndim == 2
 
-    def test_identity_gamma_does_not_change_response(self) -> None:
+    def test_corrects_detector_polarity_by_default(self) -> None:
+        """The detector's raw white-line-on-black response must come out as ink-on-paper."""
+        response = np.zeros((64, 64), dtype=np.uint8)
+        response[32, :] = 255  # a bright "line" on an otherwise dark response
+        engine = LineArtRasterEngine(resolution=64, model=_StubModel(response))
+        image = np.zeros((64, 64, 3), dtype=np.uint8)
+
+        artwork = engine.convert(image)
+
+        assert int(artwork.image[32, 0]) == 0  # the line is now ink (near-black)
+        assert int(artwork.image[0, 0]) == 255  # the background is now paper (white)
+
+    def test_identity_gamma_only_applies_the_polarity_correction(self) -> None:
+        """gamma=1.0 is a no-op on top of the unconditional 255-response polarity fix."""
         response = np.linspace(0, 255, 64 * 64, dtype=np.uint8).reshape(64, 64)
         engine = LineArtRasterEngine(resolution=64, contrast_gamma=1.0, model=_StubModel(response))
         image = np.zeros((64, 64, 3), dtype=np.uint8)
 
         artwork = engine.convert(image)
 
-        np.testing.assert_array_equal(artwork.image, response)
+        np.testing.assert_array_equal(artwork.image, 255 - response)
 
     def test_gamma_below_one_darkens_midtones(self) -> None:
         response = np.full((64, 64), 128, dtype=np.uint8)
@@ -90,16 +103,19 @@ class TestConvert:
 
         artwork = engine.convert(image)
 
-        assert int(artwork.image[0, 0]) < 128
+        # After the unconditional polarity correction (255-128=127) the
+        # gamma curve pushes this ink-positive midtone darker still.
+        assert int(artwork.image[0, 0]) < 127
 
-    def test_invert_flips_response(self) -> None:
+    def test_invert_cancels_the_polarity_correction(self) -> None:
+        """invert=True flips a second time, undoing the unconditional correction."""
         response = np.full((64, 64), 60, dtype=np.uint8)
         engine = LineArtRasterEngine(resolution=64, invert=True, model=_StubModel(response))
         image = np.zeros((64, 64, 3), dtype=np.uint8)
 
         artwork = engine.convert(image)
 
-        assert int(artwork.image[0, 0]) == 255 - 60
+        assert int(artwork.image[0, 0]) == 60
 
     def test_output_is_not_binarized(self) -> None:
         """The whole point of this engine: no thresholding, antialiasing survives."""

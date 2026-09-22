@@ -172,10 +172,13 @@ class LineArtRasterEngine(ConversionEngine):
         device : {"auto", "cpu", "cuda", "mps"}, optional
             Inference device, by default ``"auto"``.
         invert : bool, optional
-            Invert the output (``255 - response``) after the gamma curve,
-            by default False. The detector's own convention (dark = ink)
-            already matches this project's raster convention, so this is
-            only useful for a detector variant with the opposite polarity.
+            Flip the output (``255 - response``) a second time, on top of
+            the unconditional polarity correction ``convert`` already
+            applies to the detector's own raw (white-line-on-black)
+            response -- by default False. Not needed in normal use; only
+            useful if a future detector/checkpoint swap reintroduces the
+            opposite (dark-line-on-white) convention and this correction
+            would otherwise double-flip it.
         contrast_gamma : float, optional
             The only permitted manipulation of the detector's raw
             response: a gamma curve applied to the ink-positive signal
@@ -220,6 +223,18 @@ class LineArtRasterEngine(ConversionEngine):
         if response.ndim == 3:
             response = cv2.cvtColor(response, cv2.COLOR_RGB2GRAY)
         response = response.astype(np.uint8)
+
+        # LineartAnimeDetector's raw response is white lines on a black
+        # background -- confirmed against real weights during this
+        # engine's Phase 2 measurement (see scripts/ablation.py), the
+        # opposite of this project's convention (0=ink/black,
+        # 255=paper/white, see coloring_page.artwork.RasterArtwork). This
+        # correction is unconditional, not part of the optional `invert`
+        # flag below: it fixes the checkpoint's own polarity, it isn't a
+        # style choice. `lineart.py`'s Stage B shares this same detector
+        # call and, per its own docstring, was never exercised against
+        # real weights before this -- it likely needs the same fix.
+        response = 255 - response
         if debug is not None:
             debug.save("detail_response", response)
 
