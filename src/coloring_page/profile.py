@@ -36,8 +36,18 @@ class Profile:
         Target page geometry (size, margins, print resolution, stroke
         width) -- see :mod:`coloring_page.page`.
     style : str
-        A key of ``coloring_page.engines.registry.ENGINES`` (e.g.
-        ``"chained"``).
+        A key of ``coloring_page.engines.registry.ENGINES``. By default
+        ``"lineart-raster"`` -- measured (``scripts/ablation.py``) to stay
+        within an order of magnitude of this project's target ink-coverage
+        band on every reference photo, while the previous default,
+        ``"chained"``, overshot it 2-3x with hundreds of degenerate,
+        noise-sized "enclosed regions" per image. Using the default
+        requires the ``lineart_raster`` extra and a manually downloaded
+        checkpoint (see the README's "Extending with an ML engine"
+        section) -- without the extra, ``EngineUnavailableError`` is
+        raised; with the extra but no checkpoint, ``WeightsMissingError``
+        is. Pass ``style="chained"`` (or another zero-dependency style)
+        for a default install to work out of the box.
     detail : {"toddler", "child", "adult"}
         How much fine structure survives into the output -- see
         :data:`DETAIL_PRESETS` and :func:`apply_detail`. By default
@@ -61,7 +71,7 @@ class Profile:
     """
 
     page: PageSpec = field(default_factory=PageSpec)
-    style: str = "chained"
+    style: str = "lineart-raster"
     detail: DetailLevel = "child"
     device: Literal["cpu", "cuda", "auto"] = "auto"
     seed: int | None = 0
@@ -111,7 +121,7 @@ class Profile:
         debug_dir = parsed.get("debug_dir")
         return Profile(
             page=PageSpec.from_dict(parsed["page"]) if "page" in parsed else PageSpec(),
-            style=parsed.get("style", "chained"),
+            style=parsed.get("style", "lineart-raster"),
             detail=detail,
             device=parsed.get("device", "auto"),
             seed=parsed.get("seed", 0),

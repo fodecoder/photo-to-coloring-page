@@ -118,15 +118,18 @@ def build_parser(argv: list[str] | None = None) -> argparse.ArgumentParser:
         metavar="{" + ",".join(visible_styles) + "}",
         default=None,
         help=(
-            "Conversion style to use (default: chained, itself an "
-            "experimental baseline not shown below -- see "
-            "--show-experimental). Measured with scripts/compare.py "
-            "across this project's reference images: chained is "
-            "admissible (3-7%% ink coverage) on all of them, unlike every "
-            "other zero-dependency style, at a boundary F1 on par with "
-            "the best of them. Experimental (superseded baseline) styles "
-            "are hidden from this list by default; pass "
-            "--show-experimental to see them."
+            "Conversion style to use (default: lineart-raster). Measured "
+            "with scripts/ablation.py against this project's reference "
+            "photos: lineart-raster stays close to the target ink-coverage "
+            "band at every tested resolution, where the previous default, "
+            "chained (now experimental, hidden below -- see "
+            "--show-experimental), overshot it 2-3x with hundreds of "
+            "noise-sized 'enclosed regions' per image. lineart-raster "
+            "requires the lineart_raster extra and a manually downloaded "
+            "checkpoint (see the README); without them this raises "
+            "EngineUnavailableError/WeightsMissingError -- pass a "
+            "zero-dependency style (e.g. --style canny) if you haven't "
+            "installed it."
         ),
     )
     parser.add_argument(

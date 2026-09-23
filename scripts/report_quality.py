@@ -11,8 +11,8 @@ Usage
 -----
 ::
 
-    python scripts/report_quality.py docs --style chained
-    python scripts/report_quality.py docs --style chained --style region
+    python scripts/report_quality.py docs --style lineart-raster
+    python scripts/report_quality.py docs --style lineart-raster --style region
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--style",
         action="append",
         default=[],
-        help="Style to measure (repeatable; default: chained).",
+        help="Style to measure (repeatable; default: lineart-raster).",
     )
     return parser
 
@@ -55,7 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Script entry point."""
     args = build_parser().parse_args(argv)
-    styles = args.style or ["chained"]
+    styles = args.style or ["lineart-raster"]
 
     print(
         "| style | image | ink_coverage | enclosed | leaking | min_region_mm2 | dangling | passed |"
@@ -69,10 +69,16 @@ def main(argv: list[str] | None = None) -> int:
             result = convert_image(path, profile=Profile(style=style))
             report = result.report
             min_area = f"{report.min_region_area_mm2:.1f}" if report.min_region_area_mm2 else "n/a"
+            # leaking_regions/dangling_endpoints are None (not applicable, not a
+            # failed 0) for a RasterArtwork -- see coloring_page.validate.QualityReport.
+            leaking = "n/a" if report.leaking_regions is None else str(report.leaking_regions)
+            dangling = (
+                "n/a" if report.dangling_endpoints is None else str(report.dangling_endpoints)
+            )
             print(
                 f"| {style} | {filename} | {report.ink_coverage:.3f} | "
-                f"{report.enclosed_regions} | {report.leaking_regions} | {min_area} | "
-                f"{report.dangling_endpoints} | {'yes' if report.passed else 'no'} |"
+                f"{report.enclosed_regions} | {leaking} | {min_area} | "
+                f"{dangling} | {'yes' if report.passed else 'no'} |"
             )
     return 0
 

@@ -57,10 +57,13 @@ REFERENCE_PAIRS = {
 #: ~0.05 across this project's 3 reference pairs (recall 0.32-0.42 even
 #: though this style's DoG sign-error bug is already fixed -- it now just
 #: draws too little ink relative to the reference to be a coloring-page
-#: candidate here, not a leftover bug). All three stay registered and
-#: selectable via ``--styles`` for experimentation, just not part of the
-#: default comparison.
-RECOMMENDED_STYLES = sorted(ENGINES.keys() - {"adaptive", "gated", "xdog"})
+#: candidate here, not a leftover bug). Excludes ``chained``: superseded
+#: as the CLI default by ``lineart-raster`` -- ``scripts/ablation.py``
+#: measured its ink coverage 2-3x over the target band, with hundreds of
+#: noise-sized "enclosed regions" per image (see ``engines/chained.py``'s
+#: docstring). All four stay registered and selectable via ``--styles``
+#: for experimentation, just not part of the default comparison.
+RECOMMENDED_STYLES = sorted(ENGINES.keys() - {"adaptive", "gated", "xdog", "chained"})
 
 
 def _iter_input_images(input_dir: Path) -> list[Path]:

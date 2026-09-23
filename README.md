@@ -3,10 +3,15 @@
 Convert a photo (JPG/PNG) into a printable black-and-white coloring page —
 clean line art suitable for printing and coloring in.
 
-The default engine is pure classical computer vision (OpenCV): no GPU, no
-external model downloads, no machine-learning dependencies. A pluggable
-engine interface allows a deep-learning engine to be added later without
-changing the CLI or the rest of the pipeline (see [Extending with an ML
+The default engine, `lineart-raster`, is a pretrained detail-line network
+(measured against classical computer-vision baselines with
+`scripts/ablation.py` -- see [Conversion styles](#conversion-styles)) and
+requires an optional extra plus a manually downloaded checkpoint; see
+[`lineart-raster`](#lineart-raster) below. A `pip install -e .` with no
+extras still works end to end with every classical (OpenCV-only, zero-ML)
+style via `--style canny`/`xdog`/`chained`/etc. A pluggable engine
+interface allows further engines to be added without changing the CLI or
+the rest of the pipeline (see [Extending with an ML
 engine](#extending-with-an-ml-engine) below).
 
 ## Installation
@@ -144,30 +149,36 @@ directly, instead of the boundary-F1 comparison the project used before
 is a poor *acceptance* criterion):
 
 ```bash
-python scripts/report_quality.py docs --style chained
+python scripts/report_quality.py docs --style lineart-raster
 ```
 
 | style | image | ink_coverage | enclosed | leaking | min_region_mm2 | dangling | passed |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| chained | starting-image.jpeg | 0.100 | 368 | 269 | 0.0 | 1208 | no |
-| chained | starting-image-2.jpeg | 0.078 | 302 | 148 | 0.0 | 698 | no |
-| chained | starting-image-3.jpeg | 0.099 | 282 | 71 | 0.0 | 884 | no |
-| chained | starting-image-4.jpeg | 0.154 | 805 | 236 | 0.0 | 1872 | no |
-| chained | starting-image-5.jpeg | 0.080 | 331 | 188 | 0.0 | 872 | no |
-| chained | starting-image-6.jpeg | 0.103 | 354 | 259 | 0.0 | 1190 | no |
-| chained | starting-image-7.jpeg | 0.120 | 552 | 332 | 0.0 | 1834 | no |
+| lineart-raster | starting-image.jpeg | 0.001 | 7 | n/a | 0.1 | n/a | no |
+| lineart-raster | starting-image-2.jpeg | 0.006 | 2 | n/a | 0.1 | n/a | no |
+| lineart-raster | starting-image-3.jpeg | 0.003 | 4 | n/a | 0.1 | n/a | no |
+| lineart-raster | starting-image-4.jpeg | 0.001 | 0 | n/a | n/a | n/a | no |
+| lineart-raster | starting-image-5.jpeg | 0.003 | 4 | n/a | 0.1 | n/a | no |
+| lineart-raster | starting-image-6.jpeg | 0.001 | 1 | n/a | 0.2 | n/a | no |
+| lineart-raster | starting-image-7.jpeg | 0.000 | 0 | n/a | n/a | n/a | no |
 
-None of the 7 reference photos currently pass `--strict` at the default
-`Profile()` (`detail="child"`, `page=PageSpec()` -- A4 at 300dpi): every
-image has a nonzero `leaking` count, meaning `chained`'s raw traced
-geometry still has gaps a marker would leak through before any
-detail-level filtering closes them. This is measured, current behavior,
-not aspirational -- closing that gap (tighter contour-closing in the
-engines, or a dedicated closing pass in `apply_detail`) is open work, not
-something this table should paper over. `min_region_mm2` of `0.0` reflects
-the same root cause: `validate()`'s region-area measurement only considers
-regions the border flood-fill finds *enclosed*, and a leaking contour
-produces none.
+`leaking`/`dangling` are `n/a`, not a failed count: a `RasterArtwork` has
+no traced path with exact closed/open ground truth to measure them from
+(see `coloring_page.validate.QualityReport`). None of the 7 reference
+photos currently pass `--strict` at the default `Profile()`, for a
+different and more fundamental reason than `chained`'s old gap-leaking
+problem: `ink_coverage`'s `< 128` threshold only counts near-black
+pixels, and this engine's raw, un-postprocessed response is real
+line-art-shaped (see `scripts/ablation.py`'s contact sheet) but not
+dense/dark enough by that specific measure to clear the 3% floor
+calibrated against a fully-inked hand-drawn reference. This is measured,
+current, disclosed behavior, not something the threshold was loosened to
+paper over -- see `coloring_page.validate.RASTER_THRESHOLDS`'s comment.
+Likely directions: tuning `contrast_gamma`/`invert` per-image, or a
+dedicated ink-density calibration pass, both open work. `enclosed`/
+`min_region_mm2` being small (or the image having none at all) reflects
+the same underlying gap: strokes that don't form large closed shapes
+until they're inked more densely.
 
 ## Profiles and detail levels
 
@@ -233,35 +244,53 @@ a dedicated code; pass `--verbose` for the full traceback.
 
 ## Conversion styles
 
-Coloring-page-appropriate styles (uniform stroke, closed contours, low
-noise): `canny`, `chained`, `skeleton`, and `region`. `cartoon` is usable
-for painterly sources but tends to run noisier than those four. `adaptive`
-and `xdog` are kept as optional styles but are **not** recommended for
-producing a coloring page (see below).
+**`lineart-raster` (default)** requires the `lineart_raster` extra and a
+manually downloaded checkpoint -- see [`lineart-raster`](#lineart-raster)
+below, and [Extending with an ML engine](#extending-with-an-ml-engine) for
+setup. Without them, pass one of the zero-dependency classical styles
+below instead (`canny`, `chained`, `skeleton`, `region`, `cartoon`); all
+work with a plain `pip install -e .`. `adaptive` and `xdog` are also
+zero-dependency but **not** recommended for producing a coloring page (see
+below).
 
-This default was chosen using development-time methodology, not the
-project's shipped acceptance gate (see [Validating
-output](#validating-output) above for that). `scripts/metrics.py` (moved
-out of the installed package -- see `docs/DIAGNOSIS.md` §4 for why
-comparing to an artistic reference image is a poor *acceptance* criterion,
-even though it remains useful for comparing candidate engines against each
-other during development) and `scripts/compare.py` measured `chained`
-against this project's 3 reference images (boundary F1, normalized against
-a degenerate-baseline floor, and whether ink coverage lands in the 3-7%
-band a printable coloring page needs): `chained` is the only
-zero-dependency style that lands in that ink band on all 3 references, at
-a boundary F1 on par with the best of the others (`canny` matches or
-slightly beats it on raw F1 but is outside the ink band on 2 of 3). That's
-why `chained` is the default, not `canny` as earlier versions of this
-project used — see `cli.py`'s `--style` help and `engines/region.py`'s
-docstring (which was originally hypothesized to win this comparison and
-didn't) for the numbers.
+`lineart-raster` replaced `chained` as the default after
+`scripts/ablation.py` measured both against this project's 7 reference
+photos: `chained`'s ink coverage ran 2-3x over the target 3-8% band on
+every one of them, with hundreds of noise-sized "enclosed regions" per
+image (texture and paper grain chained into spurious closed loops, not
+real colorable areas), while `lineart-raster` produced consistently
+cleaner, closed-looking, antialiased line art much closer to
+`docs/desired*.jpg`'s hand-drawn style at every tested resolution — see
+the contact sheet `docs/ablation-contact-sheet.png` and crops
+`docs/ablation-crops.png`. This is a genuinely different, and slower/
+heavier, kind of default than the classical styles below: see
+[Quality report on the reference images](#quality-report-on-the-reference-images)
+for `lineart-raster`'s own current, disclosed limitation (ink density
+currently measures below `--strict`'s calibrated band on real photos, a
+different failure mode than `chained`'s old gap-leaking problem).
 
-- **`chained`** (default) — flattens small-scale texture with a rolling
+Among the classical, zero-dependency styles, `chained` is still the
+strongest general-purpose choice if you can't install the default's
+extra: `scripts/metrics.py`/`scripts/compare.py` (development-time
+methodology, not the project's shipped acceptance gate -- see [Validating
+output](#validating-output) above for that; see also `docs/DIAGNOSIS.md`
+§4 for why comparing to an artistic reference image is a poor *acceptance*
+criterion) found it the only zero-dependency style landing in the 3-7%
+ink band on all 3 of this project's older reference-F1 pairs, at a
+boundary F1 on par with the best of the others (`canny` matches or
+slightly beats it on raw F1 but is outside the ink band on 2 of 3) — see
+`cli.py`'s `--style` help and `engines/region.py`'s docstring for the
+numbers. It is now `experimental` (superseded as the CLI default, kept
+registered for comparison) — see `engines/chained.py`'s docstring for the
+`lineart-raster` comparison numbers.
+
+- **`chained`** *(experimental, superseded by `lineart-raster` as the
+  default — see above)* — flattens small-scale texture with a rolling
   guidance filter, detects *connected edge chains* (not a pixel mask) with
   `cv2.ximgproc.createEdgeDrawing`, then redraws each chain's smoothed
   geometry at a uniform stroke width. Solves broken/jittery contours at
-  the source rather than patching a mask afterwards.
+  the source rather than patching a mask afterwards. Still the strongest
+  zero-dependency classical style — see above.
 - **`canny`** — OpenCV's Canny edge detector, with thresholds derived
   from the image's own gradient-magnitude distribution, on a lightly
   blurred image. Gives crisp, thin outlines on high-contrast photos
@@ -348,26 +377,36 @@ didn't) for the numbers.
   color" expressed in millimeters (`min_region_area_mm2`,
   `min_path_length_mm`, converted to pixels via `print_dpi` -- these are
   constructor parameters, not yet exposed as CLI flags), and smooths the
-  result with Chaikin corner-cutting. Not yet measured against this
-  project's reference images with real weights; its Stage B checkpoint's
-  license is also not yet confirmed (see `THIRD_PARTY_LICENSES.md`) --
-  **do not use for real output yet**. See `engines/lineart.py`'s
-  docstring for the full design.
-- **`lineart-raster`** *(optional — requires `controlnet_aux` setup, see
-  below; no `sam2` needed)* — `lineart`'s Stage B detail-line network,
-  isolated as its own engine and returned un-vectorized as a
-  `RasterArtwork` (see `coloring_page.artwork`) instead of being merged,
-  pruned, and traced into a `Drawing`. Exists because this project's
-  vector pipeline (binarize → thin → trace) demonstrably destroys the
-  antialiasing and stroke-width modulation of a good reference line-art
-  image; this engine measures whether Stage B alone, kept raster, gets
-  closer to that reference than `chained` does — see
-  `scripts/ablation.py`. `resolution` (default 1024) is the short-side
-  working resolution the network runs at, and is what `--detail`
-  maps to via `coloring_page.profile.RASTER_RESOLUTION_PRESETS`
-  (toddler=512, child=768, adult=1280) for this engine. Shares
-  `lineart`'s Stage B checkpoint and its not-yet-confirmed license (see
-  `THIRD_PARTY_LICENSES.md`) — **do not use for real output yet**.
+  result with Chaikin corner-cutting. **Measured as unnecessary so far**:
+  `lineart-raster` (Stage B alone, no SAM 2) already lands close to this
+  project's target ink-coverage band on every reference photo, with no
+  observed "missing closed contours on large flat subjects" gap that
+  would justify adding SAM 2 segmentation back -- see
+  `engines/lineart.py`'s docstring. Its Stage B checkpoint's license is
+  also not yet confirmed (see `THIRD_PARTY_LICENSES.md`) -- **do not use
+  for real output yet**.
+- **`lineart-raster`** (default) *(requires the `lineart_raster` extra and
+  a manually downloaded checkpoint, see below; no `sam2` needed)* —
+  `lineart`'s Stage B detail-line network, isolated as its own engine and
+  returned un-vectorized as a `RasterArtwork` (see
+  `coloring_page.artwork`) instead of being merged, pruned, and traced
+  into a `Drawing`. Exists because this project's vector pipeline
+  (binarize → thin → trace) demonstrably destroys the antialiasing and
+  stroke-width modulation of a good reference line-art image; measured
+  against `chained` with `scripts/ablation.py`, it produced consistently
+  cleaner, closed-looking output at every tested resolution (see
+  [Conversion styles](#conversion-styles) above for the numbers).
+  `resolution` (default 1024) is the short-side working resolution the
+  network runs at, and is what `--detail` maps to via
+  `coloring_page.profile.RASTER_RESOLUTION_PRESETS` (toddler=512,
+  child=768, adult=1280) for this engine. **Two open caveats before
+  relying on this for real output**: it shares `lineart`'s Stage B
+  checkpoint and its not-yet-confirmed license (see
+  `THIRD_PARTY_LICENSES.md`); and its current ink density measures below
+  `--strict`'s calibrated band on real photos (see [Quality report on the
+  reference images](#quality-report-on-the-reference-images)). It is the
+  CLI default despite both -- a deliberate, disclosed tradeoff, not an
+  oversight.
 
 All built-in styles are implemented in `src/coloring_page/engines/`.
 
@@ -377,8 +416,12 @@ All built-in styles are implemented in `src/coloring_page/engines/`.
 interface. A pretrained deep-learning model can be added as a new engine
 implementing that interface and registered in
 `src/coloring_page/engines/registry.py`; the CLI and pipeline require no
-other changes. This repository does **not** bundle any model weights, and
-the default engine has zero machine-learning dependencies.
+other changes. This repository does **not** bundle any model weights.
+Every ML-backed style, including the default (`lineart-raster`), is
+registered behind its own optional extra so a plain `pip install -e .`
+still installs (though it must be given a zero-dependency `--style` to
+run without further setup -- see [Conversion
+styles](#conversion-styles)).
 
 ### `informative_drawings`
 

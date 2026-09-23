@@ -4,11 +4,17 @@
 
 `photo-to-coloring-page` is a Python CLI that converts photos (JPG/PNG)
 into printable black-and-white coloring-page line art. The default
-conversion engine is classical computer vision (OpenCV: Canny edge
-detection, adaptive thresholding, and an XDoG mode) with zero
-machine-learning dependencies; a pluggable `ConversionEngine` interface
-allows a deep-learning engine to be added later without touching the CLI
-or pipeline.
+conversion engine (`lineart-raster`) is a pretrained detail-line network,
+measured against this project's classical computer-vision engines
+(Canny edge detection, adaptive thresholding, an XDoG mode, and others)
+with `scripts/ablation.py` -- see the README's "Conversion styles"
+section for the numbers. Every classical engine has zero
+machine-learning dependencies and remains selectable via `--style`
+without installing any extra; `lineart-raster` and every other ML-backed
+engine are each gated behind their own optional extra. A pluggable
+`ConversionEngine` interface (returning either vector `Drawing` or raster
+`RasterArtwork` output -- see `coloring_page.artwork`) allows further
+engines to be added without touching the CLI or pipeline.
 
 ## Dev environment setup
 

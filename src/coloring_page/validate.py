@@ -234,9 +234,18 @@ VECTOR_THRESHOLDS: dict[str, object] = {
 #: are reported as ``None`` for a raster (see :class:`QualityReport`), so
 #: their thresholds are moot -- and adds ``min_antialiased_fraction``, the
 #: raster-only check that an engine hasn't silently binarized its output.
-#: ``ink_coverage_range`` reuses the vector band as a placeholder: the
-#: measured "ideal" raster reference (~4.7% full-black ink) already falls
-#: inside it; revisit once Phase 2's ablation numbers are in.
+#: ``ink_coverage_range`` reuses the vector band, calibrated against a real
+#: reference line-art image's own measured statistics (~4.7% full-black
+#: ink -- see tests/test_validate_calibration.py), deliberately NOT against
+#: whatever a given raster engine currently happens to produce: a
+#: threshold that rejects its own ideal is broken (this repo's lesson,
+#: twice already), but loosening it to match an engine's current output
+#: instead of a real target is the same mistake in the other direction.
+#: ``lineart-raster`` at its current default settings measures well below
+#: this band on real photos (~0.02-0.8%, see ``scripts/ablation.py`` and
+#: ``python scripts/report_quality.py docs --style lineart-raster``) --
+#: that's a disclosed, real limitation of this engine's current ink
+#: density (see its README section), not a reason to relax this band.
 RASTER_THRESHOLDS: dict[str, object] = {
     "ink_coverage_range": (0.03, 0.08),
     "min_region_area_mm2_floor": 1.0,

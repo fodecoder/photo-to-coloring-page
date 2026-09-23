@@ -19,6 +19,15 @@ rationale this engine implements. Stage B alone, without segmentation or
 vectorization, is also available as its own standalone engine -- see
 ``coloring_page.engines.lineart_raster``.
 
+**Measured as unnecessary so far**: ``scripts/ablation.py`` found
+``lineart-raster`` (Stage B alone, kept raster, no SAM 2) already close to
+this project's target ink-coverage band on every reference photo, with no
+sign of the "missing closed contours on large flat subjects" gap that
+would justify adding SAM 2 segmentation back on top (Stage A). This engine
+(SAM 2 + Stage B + merge/vectorize) stays registered and `experimental`
+for comparison, not because a concrete deficiency in ``lineart-raster``
+has been found that it fixes. Re-evaluate if one is.
+
 Requires the ``lineart`` extra (``pip install -e ".[lineart]"``) for
 ``torch``, ``sam2``, and ``controlnet_aux``, plus two manually downloaded
 checkpoints -- neither bundled with this project. See

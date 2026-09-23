@@ -108,6 +108,16 @@ class ChainedEngine(ConversionEngine):
        and redrawn with ``cv2.polylines`` on a blank canvas. This is
        what produces a uniform stroke width: the *geometry* is redrawn,
        not the mask.
+
+    Was the CLI's default until ``scripts/ablation.py`` measured it
+    against ``lineart-raster`` on this project's reference photos: this
+    engine's ink coverage came in 2-3x over the target band, with
+    hundreds of noise-sized "enclosed regions" per image (texture and
+    paper grain getting chained into spurious closed loops, not real
+    colorable areas) -- see
+    :class:`~coloring_page.engines.lineart_raster.LineArtRasterEngine`'s
+    docstring and the README for the numbers. Kept `experimental` and
+    registered for comparison, not as a coloring-page candidate.
     """
 
     name = "chained"
