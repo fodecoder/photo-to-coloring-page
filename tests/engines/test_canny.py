@@ -7,6 +7,8 @@ import numpy as np
 
 from coloring_page.drawing import rasterize
 from coloring_page.engines.canny import CannyEngine
+from coloring_page.page import PageSpec
+from coloring_page.validate import validate
 
 
 def test_requires_serial_execution_is_false() -> None:
@@ -94,3 +96,22 @@ def test_isolated_noise_is_cleaned_up(
     # Injected salt-and-pepper noise should not survive as tiny isolated
     # ink specks once the engine's speckle cleanup runs.
     assert count_small_components(noisy_result) == count_small_components(clean_result)
+
+
+def test_three_filled_shapes_trace_as_three_closed_contours() -> None:
+    # End-to-end regression for contours shattering into short open
+    # dashes: each filled shape's Canny edge must come out as exactly one
+    # closed path, so validate() reports no dangling endpoints at all.
+    image = np.full((240, 480, 3), 245, dtype=np.uint8)
+    cv2.circle(image, (80, 120), 55, (20, 20, 20), thickness=-1)
+    parallelogram = np.array([[170, 180], [290, 180], [350, 60], [230, 60]], dtype=np.int32)
+    cv2.fillPoly(image, [parallelogram], (20, 20, 20))
+    triangle = np.array([[380, 190], [460, 190], [420, 40]], dtype=np.int32)
+    cv2.fillPoly(image, [triangle], (20, 20, 20))
+
+    drawing = CannyEngine().convert(image)
+    report = validate(drawing, PageSpec())
+
+    assert len(drawing.paths) == 3
+    assert all(p.closed for p in drawing.paths)
+    assert report.dangling_endpoints == 0

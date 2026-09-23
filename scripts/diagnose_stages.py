@@ -43,7 +43,12 @@ from typing import Any, get_args
 import cv2
 import numpy as np
 
-from coloring_page.drawing import Drawing, _skeleton_neighbor_counts, rasterize
+from coloring_page.drawing import (
+    Drawing,
+    _remove_staircase_pixels,
+    _skeleton_neighbor_counts,
+    rasterize,
+)
 from coloring_page.engines.registry import get_engine
 from coloring_page.page import fit_transform
 from coloring_page.pipeline import (
@@ -227,9 +232,11 @@ def drawing_metrics(drawing: Drawing, scale_mm: float, tol_mm: float) -> dict[st
 def mask_metrics(mask: np.ndarray) -> tuple[dict[str, str], np.ndarray]:
     """Skeleton-graph statistics of the raster the tracer received.
 
-    Uses the same thinning and neighbor-count classification as
-    :func:`coloring_page.drawing.paths_from_mask`, so ``junction_px`` and
-    ``hubs`` are exactly what the tracer sees as graph nodes.
+    Uses the same thinning, staircase cleanup, and neighbor-count
+    classification as :func:`coloring_page.drawing.paths_from_mask`, so
+    ``junction_px`` and ``hubs`` are exactly what the tracer sees as graph
+    nodes. ``raw_junction_px`` is the same count on the uncleaned
+    Zhang-Suen skeleton, for comparison.
 
     Parameters
     ----------
@@ -244,7 +251,10 @@ def mask_metrics(mask: np.ndarray) -> tuple[dict[str, str], np.ndarray]:
     """
     ink = (mask > 0).astype(np.uint8) * 255
     skeleton = cv2.ximgproc.thinning(ink, thinningType=cv2.ximgproc.THINNING_ZHANGSUEN)
-    skel01 = (skeleton > 0).astype(np.uint8)
+    raw01 = (skeleton > 0).astype(np.uint8)
+    raw_junction_px = int((_skeleton_neighbor_counts(raw01) >= 3).sum())
+    raw_px = max(1, int(raw01.sum()))
+    skel01 = _remove_staircase_pixels(raw01)
     counts = _skeleton_neighbor_counts(skel01)
     junctions = (counts >= 3).astype(np.uint8)
     num_hubs, _ = cv2.connectedComponents(junctions, connectivity=8)
@@ -258,6 +268,7 @@ def mask_metrics(mask: np.ndarray) -> tuple[dict[str, str], np.ndarray]:
     cells = {
         "ink_px": str(int((mask > 0).sum())),
         "skeleton_px": str(skeleton_px),
+        "raw_junction_px": f"{raw_junction_px} ({100.0 * raw_junction_px / raw_px:.1f}%)",
         "junction_px": f"{junction_px} ({100.0 * junction_px / max(1, skeleton_px):.1f}%)",
         "hubs": str(num_hubs - 1),
         "skel_endpoints": str(int((counts == 1).sum())),
