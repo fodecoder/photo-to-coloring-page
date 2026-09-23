@@ -66,6 +66,7 @@ from coloring_page.profile import (
     apply_detail,
 )
 from coloring_page.render import to_png
+from coloring_page.validate import validate
 
 #: Tracer functions an engine module may import by name. Wrapped in the
 #: engine's own module namespace (where the engine looks them up), so the
@@ -367,6 +368,115 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def spatial_region_areas(labels: np.ndarray) -> np.ndarray:
+    """Pixel area of every *spatially connected* region of a label image.
+
+    The region engine's labels group pixels by quantized color identity,
+    so one label can cover several disjoint patches; a coloring page's
+    regions are the connected patches. Each label is labeled separately
+    inside its own bounding box, which keeps this fast even with
+    thousands of tiny labels.
+
+    Parameters
+    ----------
+    labels : np.ndarray
+        Integer label image, shape ``(H, W)``.
+
+    Returns
+    -------
+    np.ndarray
+        1-D array of region areas, in pixels.
+    """
+    flat = labels.ravel()
+    order = np.argsort(flat, kind="stable")
+    sorted_labels = flat[order]
+    starts = np.flatnonzero(np.r_[True, sorted_labels[1:] != sorted_labels[:-1]])
+    ends = np.r_[starts[1:], len(flat)]
+    width = labels.shape[1]
+    areas: list[int] = []
+    for start, end in zip(starts, ends, strict=True):
+        indices = order[start:end]
+        ys, xs = np.divmod(indices, width)
+        y0, x0 = int(ys.min()), int(xs.min())
+        patch = np.zeros((int(ys.max()) - y0 + 1, int(xs.max()) - x0 + 1), dtype=np.uint8)
+        patch[ys - y0, xs - x0] = 1
+        count, _, stats, _ = cv2.connectedComponentsWithStats(patch, connectivity=4)
+        areas.extend(int(a) for a in stats[1:count, cv2.CC_STAT_AREA])
+    return np.array(areas, dtype=np.int64)
+
+
+def region_stage_rows(
+    engine: Any, image: np.ndarray, drawing: Drawing, threshold_px: float, mm2_per_px: float
+) -> list[tuple[str, dict[str, str]]]:
+    """Recompute ``RegionEngine``'s internal stages and count what survives each.
+
+    Uses the engine's own stage functions and parameters, so the counts
+    are what ``convert`` actually saw rather than a reimplementation.
+
+    Parameters
+    ----------
+    engine : Any
+        A :class:`~coloring_page.engines.region.RegionEngine`.
+    image : np.ndarray
+        The working-resolution BGR image passed to ``convert``.
+    drawing : Drawing
+        ``convert``'s output, for the ``source_area`` distribution.
+    threshold_px : float
+        The detail preset's ``min_region_area_mm2``, converted to pixels.
+    mm2_per_px : float
+        Printed area of one working-resolution pixel.
+
+    Returns
+    -------
+    list[tuple[str, dict[str, str]]]
+    """
+    from coloring_page.engines import region
+    from coloring_page.pipeline import derive_kernel_size
+
+    working_px = max(image.shape[:2])
+    total_px = image.shape[0] * image.shape[1]
+    flattened = region._flatten(image, lambda_=engine.l0_lambda, kappa=engine.l0_kappa)
+    if engine.segmentation == "mean_shift":
+        spatial_radius = derive_kernel_size(working_px, fraction=0.01, min_value=5, odd=False)
+        labels = region.segment_mean_shift(flattened, sp=spatial_radius, sr=engine.color_radius)
+    else:
+        labels = region.segment_superpixels(
+            flattened, algorithm=engine.segmentation, num_superpixels=engine.num_superpixels
+        )
+    label_areas = np.bincount(labels.ravel())
+    spatial_areas = spatial_region_areas(labels)
+
+    lab = cv2.cvtColor(flattened, cv2.COLOR_BGR2LAB)
+    if engine.boundary_detection == "labels":
+        boundary = region._label_boundaries(labels)
+    else:
+        boundary = region.gradient_boundaries(lab, percentile=engine.gradient_percentile)
+    filtered = region.filter_by_contrast(boundary, labels, lab, min_contrast=engine.min_contrast)
+
+    source_px = np.array(
+        [p.source_area * total_px for p in drawing.paths if p.source_area is not None]
+    )
+
+    def area_cells(areas: np.ndarray) -> dict[str, str]:
+        if len(areas) == 0:
+            return {"count": "0"}
+        return {
+            "count": str(len(areas)),
+            "median_px": f"{np.median(areas):.0f}",
+            "p90_px": f"{np.percentile(areas, 90):.0f}",
+            "median_mm2": f"{np.median(areas) * mm2_per_px:.2f}",
+            "above_area_thr": str(int((areas >= threshold_px).sum())),
+        }
+
+    return [
+        ("segment: color labels", area_cells(label_areas[label_areas > 0])),
+        ("segment: spatial regions", area_cells(spatial_areas)),
+        ("boundary: raw px", {"count": str(int(boundary.sum()))}),
+        ("boundary: after contrast filter px", {"count": str(int(filtered.sum()))}),
+        ("engine paths: source_area", area_cells(source_px)),
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
     """Script entry point."""
     args = build_parser().parse_args(argv)
@@ -387,6 +497,16 @@ def main(argv: list[str] | None = None) -> int:
     scale_mm, _, _ = fit_transform(artwork, profile.page)
     tol = args.endpoint_tol_mm
     rows: list[tuple[str, dict[str, str]]] = []
+
+    # Engines that wrap one contour per call (e.g. region) would otherwise
+    # produce one table row per contour: report their chains as one stage.
+    chain_calls = [c for c in calls if c.mask is None]
+    if len(chain_calls) > 1:
+        merged = tuple(p for c in chain_calls for p in c.paths)
+        calls = [c for c in calls if c.mask is not None]
+        calls.append(
+            TracerCall("paths_from_point_chains", None, chain_calls[0].image_shape, merged)
+        )
 
     for i, call in enumerate(calls):
         suffix = f"[{i}]" if len(calls) > 1 else ""
@@ -438,7 +558,11 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     page = to_png(stage, profile.page)
-    rows.append(("render (page raster)", render_metrics(page)))
+    render_cells = render_metrics(page)
+    report = validate(stage, profile.page)
+    render_cells["enclosed_regions"] = str(report.enclosed_regions)
+    render_cells["ink_coverage"] = f"{report.ink_coverage:.4f}"
+    rows.append(("render (page raster)", render_cells))
     sink.save("diag_render", page)
 
     print(
@@ -446,6 +570,15 @@ def main(argv: list[str] | None = None) -> int:
         f"scale={scale_mm:.1f} mm/unit ({scale_mm / working_px:.3f} mm/px) "
         f"endpoint_tol={tol}mm\n"
     )
+    if args.style == "region":
+        mm2_per_px = (scale_mm / working_px) ** 2
+        threshold_px = params.min_region_area_mm2 / mm2_per_px
+        print(
+            f"Region stages (area threshold {params.min_region_area_mm2} mm2 = "
+            f"{threshold_px:.0f} px at {mm2_per_px:.4f} mm2/px):\n"
+        )
+        print_table(region_stage_rows(engine, image, artwork, threshold_px, mm2_per_px))
+        print()
     print_table(rows)
     print(f"\nStage images written to {args.out_dir}")
     return 0
