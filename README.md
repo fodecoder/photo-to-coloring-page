@@ -475,6 +475,44 @@ Once both are in place, `lineart` appears as a `--style` choice with
 `--show-experimental`. Without them, it's simply absent, and the default
 install stays free of ML dependencies.
 
+### `lineart-raster`
+
+`src/coloring_page/engines/lineart_raster.py` isolates `lineart`'s Stage B
+(controlnet_aux's `lineart_anime` preprocessor) as its own engine, run
+without SAM 2 segmentation and returned un-vectorized as a `RasterArtwork`
+(see `coloring_page.artwork`) instead of a `Drawing`. Shares `lineart`'s
+Stage B checkpoint and its not-yet-confirmed license -- see
+`THIRD_PARTY_LICENSES.md`. **Do not rely on this engine for real output
+until that entry is resolved.** To use it (once that's done):
+
+1. Install the `lineart_raster` extra: `pip install -e ".[lineart_raster]"`
+   (adds `torch`, `controlnet_aux`, `huggingface_hub` -- deliberately no
+   `sam2`).
+2. Fetch the checkpoint:
+   `python scripts/fetch_weights.py --filename netG.pth --dest weights/netG.pth`.
+3. Save it to `weights/netG.pth` (relative to wherever you run the CLI
+   from), to `~/.cache/coloring_page/netG.pth`, or set the
+   `COLORING_PAGE_LINEART_RASTER_WEIGHTS` environment variable.
+
+Once the checkpoint is in place, `lineart-raster` appears as a `--style`
+choice (it isn't marked experimental -- unlike `lineart`, the point of
+this engine is to actually run and measure it; see `scripts/ablation.py`).
+`--detail toddler/child/adult` maps to its working resolution
+(512/768/1280 via `coloring_page.profile.RASTER_RESOLUTION_PRESETS`), not
+to a post-hoc filter.
+
+> **Installing `lineart` or `lineart-raster` can break `cv2.ximgproc`.**
+> Both extras pull in `controlnet_aux`, which depends on
+> `opencv-python-headless` -- a package that installs into the same `cv2/`
+> folder as this project's `opencv-contrib-python` dependency and can
+> silently overwrite its compiled `ximgproc` algorithms (thinning,
+> `rollingGuidanceFilter`, `EdgeDrawing`, `l0Smooth`, superpixel
+> segmentation). Symptom: `chained` (the CLI default), `region`, and
+> `skeleton_redraw` start raising
+> `AttributeError: module 'cv2.ximgproc' has no attribute '...'`, even
+> though `cv2.ximgproc` itself still imports fine. Fix: run
+> `python scripts/fix_opencv_contrib.py` after installing either extra.
+
 ### Weights cache directory
 
 Every ML engine resolves its checkpoint in the same order: an explicit

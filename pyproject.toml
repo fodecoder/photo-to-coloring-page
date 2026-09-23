@@ -14,6 +14,14 @@ dependencies = [
     # modules, plus cv2.ximgproc) -- installing it is a drop-in
     # replacement, needed for the "chained" and "skeleton" engines'
     # rollingGuidanceFilter/l0Smooth/createEdgeDrawing/thinning calls.
+    #
+    # Hazard: the `lineart`/`lineart_raster` extras pull in controlnet_aux,
+    # which depends on opencv-python-headless. Both packages install into
+    # the same cv2/ folder, and whichever installs last silently overwrites
+    # the other's compiled extensions -- if that's opencv-python-headless,
+    # cv2.ximgproc's algorithms disappear (the submodule still imports, but
+    # every real function on it raises AttributeError). If you see that
+    # after installing an ML extra, run `python scripts/fix_opencv_contrib.py`.
     "opencv-contrib-python>=4.8,<6",
     "numpy>=1.24,<3",
     "Pillow>=10.0,<12",
