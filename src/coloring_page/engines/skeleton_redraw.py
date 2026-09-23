@@ -7,6 +7,7 @@ import numpy as np
 
 from coloring_page.drawing import Drawing, paths_from_mask, rasterize
 from coloring_page.engines.base import ConversionEngine, DebugSink
+from coloring_page.pipeline import l0_smooth
 
 
 class SkeletonRedrawEngine(ConversionEngine):
@@ -76,7 +77,10 @@ class SkeletonRedrawEngine(ConversionEngine):
         --------
         ConversionEngine.convert : Full parameter and return-value contract.
         """
-        flattened = cv2.ximgproc.l0Smooth(image, lambda_=self.l0_lambda, kappa=self.l0_kappa)
+        # l0_smooth, not cv2.ximgproc.l0Smooth directly: the raw call's
+        # periodic boundary invents a step along the image border that
+        # Canny below would trace as a frame around the page.
+        flattened = l0_smooth(image, lambda_=self.l0_lambda, kappa=self.l0_kappa)
         if debug is not None:
             debug.save("flattened", flattened)
         gray = cv2.cvtColor(flattened, cv2.COLOR_BGR2GRAY)

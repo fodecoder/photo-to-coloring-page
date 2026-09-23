@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
+import pytest
 
 from coloring_page.drawing import rasterize
 from coloring_page.engines.skeleton_redraw import SkeletonRedrawEngine
@@ -69,3 +71,40 @@ def test_debug_sink_receives_all_stages(synthetic_photo: np.ndarray) -> None:
     # happens inside paths_from_mask, which has no raster intermediate to
     # report -- "redraw" is the vector Drawing's own rasterized preview.
     assert sink.stage_names == ["flattened", "edges", "redraw"]
+
+
+def _horizontal_gradient(height: int, width: int) -> np.ndarray:
+    ramp = np.tile(np.linspace(60, 200, width).astype(np.uint8), (height, 1))
+    return np.dstack([ramp, ramp, ramp])
+
+
+def test_uniform_image_produces_no_paths() -> None:
+    image = np.full((200, 300, 3), 180, dtype=np.uint8)
+
+    drawing = SkeletonRedrawEngine().convert(image)
+
+    assert len(drawing.paths) == 0
+
+
+@pytest.mark.parametrize("background", ["uniform", "horizontal_gradient"])
+def test_centered_circle_has_no_path_near_border(background: str) -> None:
+    # The gradient background is the real regression case: l0Smooth's
+    # periodic boundary treats the dark left edge as adjacent to the
+    # light right edge, which used to produce a step along the whole
+    # border that got traced as a frame. A uniform background has equal
+    # opposite edges, so it can't trigger the artifact on its own.
+    height, width = 200, 300
+    if background == "uniform":
+        image = np.full((height, width, 3), 230, dtype=np.uint8)
+    else:
+        image = _horizontal_gradient(height, width)
+    cv2.circle(image, (width // 2, height // 2), 50, (20, 20, 20), thickness=-1)
+
+    drawing = SkeletonRedrawEngine().convert(image)
+
+    assert len(drawing.paths) >= 1
+    long_side = max(height, width)
+    for path in drawing.paths:
+        x, y = (path.points * long_side).T
+        near_border = (x <= 2) | (y <= 2) | (x >= width - 3) | (y >= height - 3)
+        assert not np.any(near_border), "a path runs within 2px of the image border"

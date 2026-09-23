@@ -201,6 +201,47 @@ def smooth_preserving_edges(
     return cv2.bilateralFilter(gray, d, sigma_color, sigma_space)
 
 
+#: Width of the mirrored border :func:`l0_smooth` adds on every side, as a
+#: fraction of the image's long side. Only needs to be wide enough that
+#: the periodic wrap-around seam lands inside the discarded padding; 5%
+#: removed every spurious border edge on both synthetic gradients and
+#: real photos, matching a full 2Wx2H mirror at a fraction of its cost.
+L0_BORDER_PAD_FRACTION = 0.05
+
+
+def l0_smooth(image: np.ndarray, *, lambda_: float, kappa: float) -> np.ndarray:
+    """``cv2.ximgproc.l0Smooth`` without its wrap-around border artifact.
+
+    ``l0Smooth`` solves its minimization in the Fourier domain, which
+    treats the image as periodic: column 0 is smoothed as if it were
+    adjacent to column ``W-1``, and row 0 to row ``H-1``. Whenever
+    opposite edges of a photo differ in brightness -- almost always --
+    that invents a step along the entire perimeter, which a downstream
+    edge detector then traces as a frame around the page. Mirroring the
+    image outward first moves that seam into padding that is cropped
+    away afterwards.
+
+    Parameters
+    ----------
+    image : np.ndarray
+        BGR or grayscale ``uint8`` image.
+    lambda_ : float
+        Passed to ``l0Smooth``; smoothness weight.
+    kappa : float
+        Passed to ``l0Smooth``; weight-increase rate.
+
+    Returns
+    -------
+    np.ndarray
+        Smoothed image, same shape and dtype as ``image``.
+    """
+    height, width = image.shape[:2]
+    pad = max(8, round(L0_BORDER_PAD_FRACTION * max(height, width)))
+    padded = cv2.copyMakeBorder(image, pad, pad, pad, pad, cv2.BORDER_REFLECT)
+    smoothed: np.ndarray = cv2.ximgproc.l0Smooth(padded, lambda_=lambda_, kappa=kappa)
+    return smoothed[pad : pad + height, pad : pad + width].copy()
+
+
 class DebugSink:
     """Writes an engine's intermediate conversion stages to disk.
 

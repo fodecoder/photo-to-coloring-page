@@ -14,6 +14,7 @@ from coloring_page.pipeline import (
     UnsupportedFormatError,
     default_line_thickness,
     derive_kernel_size,
+    l0_smooth,
     load_image,
     resize_to_max_dimension,
     run_pipeline,
@@ -140,3 +141,23 @@ def test_run_pipeline_skips_debug_output_when_debug_dir_omitted(
 
     # No debug_dir was created anywhere under tmp_path.
     assert not any(tmp_path.iterdir())
+
+
+def test_l0_smooth_keeps_shape_and_dtype(synthetic_photo: np.ndarray) -> None:
+    result = l0_smooth(synthetic_photo, lambda_=0.02, kappa=2.0)
+    assert result.shape == synthetic_photo.shape
+    assert result.dtype == synthetic_photo.dtype
+
+
+def test_l0_smooth_does_not_distort_border_of_mismatched_edges() -> None:
+    # A left-to-right ramp has opposite edges 140 levels apart. Raw
+    # cv2.ximgproc.l0Smooth wraps them into each other (periodic FFT
+    # boundary) and shifts the border columns by ~70 levels; the padded
+    # version should keep them no more distorted than the interior.
+    ramp = np.tile(np.linspace(60, 200, 300).astype(np.uint8), (200, 1))
+    image = np.dstack([ramp, ramp, ramp])
+
+    result = l0_smooth(image, lambda_=0.02, kappa=2.0)
+
+    deviation = np.abs(result.astype(np.int16) - image.astype(np.int16))
+    assert deviation[:, [0, -1]].max() <= 20
